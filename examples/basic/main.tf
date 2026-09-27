@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     kividb = {
-      source  = "kividb/kividb"
+      source  = "kividbio/kividb"
       version = "~> 0.1"
     }
   }

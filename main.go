@@ -7,7 +7,7 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 
-	"github.com/kividb/terraform-provider-kividb/internal/provider"
+	"github.com/kividbio/terraform-provider-kividb/internal/provider"
 )
 
 // Set by the release build; "dev" when run from source.
@@ -19,7 +19,7 @@ func main() {
 	flag.Parse()
 
 	err := providerserver.Serve(context.Background(), provider.New(version), providerserver.ServeOpts{
-		Address: "registry.terraform.io/kividb/kividb",
+		Address: "registry.terraform.io/kividbio/kividb",
 		Debug:   debug,
 	})
 	if err != nil {

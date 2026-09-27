@@ -6,7 +6,7 @@ Manage KiviDB databases from Terraform.
 terraform {
   required_providers {
     kividb = {
-      source  = "kividb/kividb"
+      source  = "kividbio/kividb"
       version = "~> 0.1"
     }
   }
@@ -106,14 +106,14 @@ filesystem mirror:
 provider_installation {
   filesystem_mirror {
     path    = "/path/to/plugins"
-    include = ["registry.terraform.io/kividb/*"]
+    include = ["registry.terraform.io/kividbio/*"]
   }
-  direct { exclude = ["registry.terraform.io/kividb/*"] }
+  direct { exclude = ["registry.terraform.io/kividbio/*"] }
 }
 ```
 
 ```console
-$ go build -o /path/to/plugins/registry.terraform.io/kividb/kividb/0.1.0/<os>_<arch>/terraform-provider-kividb_v0.1.0
+$ go build -o /path/to/plugins/registry.terraform.io/kividbio/kividb/0.1.0/<os>_<arch>/terraform-provider-kividb_v0.1.0
 $ KIVIDB_API_ENDPOINT=http://127.0.0.1:3000 terraform plan
 ```
 

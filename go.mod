@@ -1,4 +1,4 @@
-module github.com/kividb/terraform-provider-kividb
+module github.com/kividbio/terraform-provider-kividb
 
 go 1.23
 
