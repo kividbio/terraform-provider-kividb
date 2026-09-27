@@ -1,0 +1,7 @@
+terraform-provider-kividb
+terraform-provider-kividb.exe
+dist/
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup

@@ -1,0 +1,297 @@
+package provider
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// Client talks to the KiviDB Cloud API as an organization, not as a person.
+//
+// An API key carries the organization and the role, so there is no notion of
+// "current organization" to select and no session to refresh. The key is sent as
+// a bearer token exactly as a session token would be; the server tells them
+// apart by the kvdb_ prefix.
+type Client struct {
+	baseURL string
+	apiKey  string
+	http    *http.Client
+}
+
+func NewClient(baseURL, apiKey string) *Client {
+	return &Client{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
+		// Generous, because a create is a synchronous request that provisions
+		// nothing -- it queues -- but a resize on a busy control plane can take
+		// a few seconds to be accepted. Waiting for the instance to become ready
+		// is done by polling, not by holding one request open.
+		http: &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
+// APIError is a refusal the server explained.
+//
+// The code and message are surfaced verbatim in Terraform's output because they
+// are written for whoever is holding the key: "free tier instances are one per
+// person and can only be created while signed in" tells somebody what to do,
+// where "422" does not.
+type APIError struct {
+	Status  int
+	Code    string
+	Message string
+}
+
+func (e *APIError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	if e.Code != "" {
+		return fmt.Sprintf("%s (HTTP %d)", e.Code, e.Status)
+	}
+	return fmt.Sprintf("HTTP %d", e.Status)
+}
+
+// IsNotFound reports whether the resource is gone, which Terraform treats as
+// "removed outside of Terraform" rather than as a failure.
+func (e *APIError) IsNotFound() bool { return e.Status == http.StatusNotFound }
+
+func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
+	var reader io.Reader
+	if body != nil {
+		buf, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("encoding request: %w", err)
+		}
+		reader = bytes.NewReader(buf)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	res, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("calling %s %s: %w", method, path, err)
+	}
+	defer res.Body.Close()
+
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+
+	if res.StatusCode >= 400 {
+		apiErr := &APIError{Status: res.StatusCode}
+		var envelope struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(raw, &envelope) == nil {
+			apiErr.Code = envelope.Error.Code
+			apiErr.Message = envelope.Error.Message
+		}
+		return apiErr
+	}
+
+	if out != nil && len(raw) > 0 {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return fmt.Errorf("decoding response from %s %s: %w", method, path, err)
+		}
+	}
+	return nil
+}
+
+// Instance is the shape the API returns. Fields the provider does not surface
+// are still decoded, so adding an attribute later needs no client change.
+type Instance struct {
+	ID                    string  `json:"id"`
+	Name                  *string `json:"name"`
+	Tier                  string  `json:"tier"`
+	Cloud                 string  `json:"cloud"`
+	Region                string  `json:"region"`
+	DataSizeGB            int64   `json:"data_size_gb"`
+	ThroughputMode        string  `json:"throughput_mode"`
+	ReplicaCount          int64   `json:"replica_count"`
+	Status                string  `json:"status"`
+	Endpoint              *string `json:"endpoint"`
+	PublicEndpoint        *string `json:"public_endpoint"`
+	KividbVersion         *string `json:"kividb_version"`
+	AofEnabled            bool    `json:"aof_enabled"`
+	LuaEnabled            bool    `json:"lua_enabled"`
+	TLSEnabled            bool    `json:"tls_enabled"`
+	TLSOnly               bool    `json:"tls_only"`
+	FreeTier              bool    `json:"free_tier"`
+	PrivateNetworkEnabled bool    `json:"private_network_enabled"`
+	OrgID                 *string `json:"org_id"`
+	CreatedAt             string  `json:"created_at"`
+}
+
+type CreateInstanceRequest struct {
+	Name           *string `json:"name,omitempty"`
+	Tier           string  `json:"tier"`
+	Cloud          string  `json:"cloud"`
+	Region         string  `json:"region"`
+	DataSizeGB     int64   `json:"data_size_gb"`
+	ThroughputMode string  `json:"throughput_mode"`
+	ReplicaCount   int64   `json:"replica_count"`
+	KividbVersion  *string `json:"kividb_version,omitempty"`
+	AofEnabled     *bool   `json:"aof_enabled,omitempty"`
+	LuaEnabled     *bool   `json:"lua_enabled,omitempty"`
+	TLSEnabled     *bool   `json:"tls_enabled,omitempty"`
+	TLSOnly        *bool   `json:"tls_only,omitempty"`
+}
+
+type createInstanceResponse struct {
+	InstanceID string `json:"instance_id"`
+	JobID      string `json:"job_id"`
+	Status     string `json:"status"`
+}
+
+// CreateInstance queues the provisioning and returns the new id.
+//
+// The idempotency key matters more here than anywhere else in the provider: a
+// create whose response is lost to a timeout would otherwise be retried into a
+// second instance, and the customer would be billed for one they never see in
+// state. The server stores the response against the key and replays it.
+func (c *Client) CreateInstance(ctx context.Context, req CreateInstanceRequest, idempotencyKey string) (string, error) {
+	var out createInstanceResponse
+	path := "/instances"
+	if err := c.doWithIdempotency(ctx, http.MethodPost, path, req, &out, idempotencyKey); err != nil {
+		return "", err
+	}
+	return out.InstanceID, nil
+}
+
+func (c *Client) doWithIdempotency(ctx context.Context, method, path string, body any, out any, key string) error {
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("encoding request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
+
+	res, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("calling %s %s: %w", method, path, err)
+	}
+	defer res.Body.Close()
+	raw, err := io.ReadAll(res.Body)
+	if err != nil {
+		return fmt.Errorf("reading response: %w", err)
+	}
+	if res.StatusCode >= 400 {
+		apiErr := &APIError{Status: res.StatusCode}
+		var envelope struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(raw, &envelope) == nil {
+			apiErr.Code = envelope.Error.Code
+			apiErr.Message = envelope.Error.Message
+		}
+		return apiErr
+	}
+	if out != nil && len(raw) > 0 {
+		return json.Unmarshal(raw, out)
+	}
+	return nil
+}
+
+// GetInstance reads one instance.
+//
+// The response is wrapped -- `{"instance": {...}}` -- where the list endpoint
+// wraps in `{"instances": [...]}`. Decoding it flat silently produced an
+// Instance with every field at its zero value, which Terraform then reported as
+// the provider returning "aws" as "" after an apply. Found by running a real
+// apply; a unit test now pins the shape.
+func (c *Client) GetInstance(ctx context.Context, id string) (*Instance, error) {
+	var wrapper struct {
+		Instance Instance `json:"instance"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/instances/"+id, nil, &wrapper); err != nil {
+		return nil, err
+	}
+	if wrapper.Instance.ID == "" {
+		return nil, fmt.Errorf("the API returned no instance for %s", id)
+	}
+	return &wrapper.Instance, nil
+}
+
+// Rename is the only thing PATCH does. The narrowness is deliberate on the
+// server and is what the provider relies on: a rename cannot accidentally carry
+// a resize with it.
+func (c *Client) Rename(ctx context.Context, id, name string) error {
+	return c.do(ctx, http.MethodPatch, "/instances/"+id, map[string]string{"name": name}, nil)
+}
+
+// Resize changes the disk, the throughput mode, or both in one call.
+type ResizeRequest struct {
+	DataSizeGB     *int64  `json:"data_size_gb,omitempty"`
+	ThroughputMode *string `json:"throughput_mode,omitempty"`
+}
+
+func (c *Client) Resize(ctx context.Context, id string, req ResizeRequest) error {
+	return c.do(ctx, http.MethodPost, "/instances/"+id+"/resize", req, nil)
+}
+
+// ScaleReplicas takes 1..3. Zero is not a value this endpoint accepts -- going
+// from replicated back to single-node is not a scale, it is a different shape of
+// instance -- which the resource turns into a clear error rather than a 400.
+func (c *Client) ScaleReplicas(ctx context.Context, id string, count int64) error {
+	return c.do(ctx, http.MethodPost, "/instances/"+id+"/replicas",
+		map[string]int64{"replica_count": count}, nil)
+}
+
+func (c *Client) UpgradeTier(ctx context.Context, id, tier string) error {
+	return c.do(ctx, http.MethodPost, "/instances/"+id+"/upgrade",
+		map[string]string{"tier": tier}, nil)
+}
+
+// UpgradeBinary changes the engine version and the two flags that travel with
+// it, because all three are applied by the same restart.
+type BinaryRequest struct {
+	KividbVersion string `json:"kividb_version"`
+	LuaEnabled    *bool  `json:"lua_enabled,omitempty"`
+	TLSEnabled    *bool  `json:"tls_enabled,omitempty"`
+}
+
+func (c *Client) UpgradeBinary(ctx context.Context, id string, req BinaryRequest) error {
+	return c.do(ctx, http.MethodPost, "/instances/"+id+"/binary", req, nil)
+}
+
+func (c *Client) DeleteInstance(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/instances/"+id, map[string]any{}, nil)
+}
+
+// Whoami is used once at configure time so a bad key fails with "that key is not
+// valid" at plan, rather than as a confusing 401 partway through an apply.
+func (c *Client) Whoami(ctx context.Context) error {
+	var out struct {
+		Instances []Instance `json:"instances"`
+	}
+	return c.do(ctx, http.MethodGet, "/instances", nil, &out)
+}

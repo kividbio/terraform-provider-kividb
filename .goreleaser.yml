@@ -1,0 +1,51 @@
+# Builds the release artefacts the Terraform Registry expects: one archive per
+# platform, a SHA256SUMS file, and a detached GPG signature over that file. The
+# registry verifies the signature against the public key you upload once, which
+# is what lets it serve the provider as yours.
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    # Reproducible: no build timestamp, and the version comes from the tag.
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - "-s -w -X main.version={{.Version}}"
+    goos: [freebsd, windows, linux, darwin]
+    goarch: [amd64, "386", arm, arm64]
+    ignore:
+      - goos: darwin
+        goarch: "386"
+    binary: "{{ .ProjectName }}_v{{ .Version }}"
+
+archives:
+  - formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
+release:
+  # The registry reads the changelog from the GitHub release body.
+  draft: false
+
+changelog:
+  disable: true
