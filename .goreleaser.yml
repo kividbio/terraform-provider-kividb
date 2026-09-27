@@ -29,6 +29,12 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
+  # The manifest is checksummed alongside the archives, so the signature covers
+  # it too. A protocol version the registry trusts but nobody signed would be a
+  # gap in exactly the chain this signing exists to close.
+  extra_files:
+    - glob: "terraform-registry-manifest.json"
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256
 
@@ -44,6 +50,14 @@ signs:
       - "${artifact}"
 
 release:
+  # Without this file the registry assumes protocol 5.0, and this provider is
+  # built on terraform-plugin-framework, which serves 6.0. The mismatch is not
+  # visible at publish time -- it surfaces as a protocol error in somebody
+  # else's `terraform init`, against a version number that can never be
+  # withdrawn.
+  extra_files:
+    - glob: "terraform-registry-manifest.json"
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
   # The registry reads the changelog from the GitHub release body.
   draft: false
 
