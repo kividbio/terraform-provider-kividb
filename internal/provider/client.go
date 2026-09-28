@@ -266,9 +266,15 @@ func (c *Client) ScaleReplicas(ctx context.Context, id string, count int64) erro
 		map[string]int64{"replica_count": count}, nil)
 }
 
-func (c *Client) UpgradeTier(ctx context.Context, id, tier string) error {
+// UpgradeToPro moves an Essentials database to Pro.
+//
+// The endpoint does not take a tier. It is the tier change -- Pro is the only
+// destination -- and what it needs is the replica count to come up with, because
+// a Pro database is replicated and Essentials is not. Sending {"tier": "pro"}
+// got a 500 with "replica_count: Required" buried in the server's logs.
+func (c *Client) UpgradeToPro(ctx context.Context, id string, replicaCount int64) error {
 	return c.do(ctx, http.MethodPost, "/instances/"+id+"/upgrade",
-		map[string]string{"tier": tier}, nil)
+		map[string]int64{"replica_count": replicaCount}, nil)
 }
 
 // UpgradeBinary changes the engine version and the two flags that travel with

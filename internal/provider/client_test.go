@@ -75,11 +75,18 @@ func TestVerbEndpointsSendWhatTheApiParses(t *testing.T) {
 		t.Errorf("replicas wrong: %s %v", gotPath, gotBody)
 	}
 
-	if err := c.UpgradeTier(ctx, "i-1", "pro"); err != nil {
+	// The upgrade endpoint takes a replica count, not a tier. This test used to
+	// assert the opposite and passed anyway, because the stub server accepts
+	// whatever it is sent -- so a body the real API answered with a 500 looked
+	// correct in CI for as long as nobody pointed the provider at a real server.
+	if err := c.UpgradeToPro(ctx, "i-1", 2); err != nil {
 		t.Fatalf("tier: %v", err)
 	}
-	if gotPath != "/instances/i-1/upgrade" || gotBody["tier"] != "pro" {
-		t.Errorf("tier wrong: %s %v", gotPath, gotBody)
+	if gotPath != "/instances/i-1/upgrade" || gotBody["replica_count"] != float64(2) {
+		t.Errorf("upgrade wrong: %s %v", gotPath, gotBody)
+	}
+	if _, present := gotBody["tier"]; present {
+		t.Errorf("upgrade sent a tier, which the endpoint does not accept: %v", gotBody)
 	}
 
 	lua := true

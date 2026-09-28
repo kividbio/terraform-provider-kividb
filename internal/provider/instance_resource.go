@@ -349,14 +349,39 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 	}
 
+	// Set when the tier change already carried the replica count, so the scale
+	// below does not repeat it. Upgrading queues work that takes minutes, and a
+	// second call made while it is still running is refused -- the database is
+	// not Pro yet, which is exactly what the upgrade is busy fixing.
+	replicasSetByUpgrade := false
+
 	if !plan.Tier.Equal(state.Tier) {
-		if err := r.client.UpgradeTier(ctx, id, plan.Tier.ValueString()); err != nil {
+		// Pro is the only tier this endpoint reaches, and it needs the replica
+		// count to bring up with it. Anything else is refused here rather than
+		// sent, so the error names the tier instead of arriving as a 4xx about a
+		// field the practitioner did not write.
+		if plan.Tier.ValueString() != "pro" {
+			res.Diagnostics.AddError(
+				"Cannot change to that tier",
+				"An existing database can only be upgraded to `pro`. Moving to `"+
+					plan.Tier.ValueString()+"` is not something the API can do in place.",
+			)
+			return
+		}
+		// Default to one replica when the configuration does not say: Pro is
+		// replicated by definition, and zero is not a shape it has.
+		replicas := int64(1)
+		if !plan.ReplicaCount.IsNull() && !plan.ReplicaCount.IsUnknown() && plan.ReplicaCount.ValueInt64() > 0 {
+			replicas = plan.ReplicaCount.ValueInt64()
+		}
+		if err := r.client.UpgradeToPro(ctx, id, replicas); err != nil {
 			res.Diagnostics.AddError("Could not change the tier", explain(err))
 			return
 		}
+		replicasSetByUpgrade = true
 	}
 
-	if !plan.ReplicaCount.Equal(state.ReplicaCount) {
+	if !replicasSetByUpgrade && !plan.ReplicaCount.Equal(state.ReplicaCount) {
 		want := plan.ReplicaCount.ValueInt64()
 		if want == 0 {
 			// Said here rather than sent as a 400, because the useful answer is
