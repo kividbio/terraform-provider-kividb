@@ -120,3 +120,22 @@ $ KIVIDB_API_ENDPOINT=http://127.0.0.1:3000 terraform plan
 ## Licence
 
 Mozilla Public License 2.0. See [LICENSE](LICENSE).
+
+## Snapshots
+
+A `kividb_disk_snapshot` is a point-in-time copy of a database's data volume.
+
+```hcl
+resource "kividb_disk_snapshot" "nightly" {
+  instance_id = kividb_instance.cache.id
+  label       = "before-migration"
+}
+```
+
+The label is the only thing about a snapshot you can change afterwards. Pointing
+`instance_id` at a different database plans a new snapshot and destroys this
+one, because nothing re-points a copy that has already been taken.
+
+By default the apply waits for the copy to finish, since a snapshot still being
+written cannot be restored from. Set `wait_for_ready = false` to return as soon
+as the server accepts it.
