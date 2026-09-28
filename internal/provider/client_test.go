@@ -184,3 +184,36 @@ func TestGetInstanceRejectsAnEmptyWrapper(t *testing.T) {
 		t.Fatal("an empty instance must not be accepted as real")
 	}
 }
+
+// A NUMERIC column arrives as a string from one endpoint and a number from
+// another. Both have to read, because the snapshot was already taken by the
+// time this runs and failing the decode strands it.
+func TestFlexFloatReadsBothSpellings(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want *float64
+	}{
+		{`{"size_gb": 8}`, f64(8)},
+		{`{"size_gb": "8.00"}`, f64(8)},
+		{`{"size_gb": null}`, nil},
+		{`{"size_gb": ""}`, nil},
+	} {
+		var out struct {
+			SizeGB flexFloat `json:"size_gb"`
+		}
+		if err := json.Unmarshal([]byte(tc.in), &out); err != nil {
+			t.Fatalf("%s: %v", tc.in, err)
+		}
+		if tc.want == nil {
+			if out.SizeGB.Value != nil {
+				t.Errorf("%s: wanted null, got %v", tc.in, *out.SizeGB.Value)
+			}
+			continue
+		}
+		if out.SizeGB.Value == nil || *out.SizeGB.Value != *tc.want {
+			t.Errorf("%s: wanted %v, got %v", tc.in, *tc.want, out.SizeGB.Value)
+		}
+	}
+}
+
+func f64(v float64) *float64 { return &v }

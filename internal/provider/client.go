@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -300,4 +301,100 @@ func (c *Client) Whoami(ctx context.Context) error {
 		Instances []Instance `json:"instances"`
 	}
 	return c.do(ctx, http.MethodGet, "/instances", nil, &out)
+}
+
+// flexFloat reads a number that may arrive as a JSON string.
+//
+// size_gb is NUMERIC in Postgres, and the driver renders NUMERIC as a string to
+// avoid the precision loss float64 would introduce. So the same field arrives as
+// 8 from one endpoint and "8.00" from another, and a plain *float64 fails the
+// whole response with "cannot unmarshal string into float64" -- which surfaced
+// as a snapshot that had been taken successfully and then could not be read
+// back.
+//
+// Tolerant on the way in rather than strict: the provider does not get to
+// choose how the server spells its numbers.
+type flexFloat struct{ Value *float64 }
+
+func (f *flexFloat) UnmarshalJSON(b []byte) error {
+	s := strings.TrimSpace(string(b))
+	if s == "null" || s == `""` || s == "" {
+		f.Value = nil
+		return nil
+	}
+	s = strings.Trim(s, `"`)
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return fmt.Errorf("reading %q as a number: %w", s, err)
+	}
+	f.Value = &v
+	return nil
+}
+
+// DiskSnapshot is a point-in-time copy of an instance's data volume.
+type DiskSnapshot struct {
+	ID           string   `json:"id"`
+	InstanceID   string   `json:"instance_id"`
+	InstanceName string   `json:"instance_name"`
+	Label        string   `json:"label"`
+	Cloud        string   `json:"cloud"`
+	Region       string   `json:"region"`
+	SizeGB       flexFloat `json:"size_gb"`
+	Status       string   `json:"status"`
+	TriggeredBy  string   `json:"triggered_by"`
+	CreatedAt    string   `json:"created_at"`
+	CompletedAt  *string  `json:"completed_at"`
+	ErrorMessage *string  `json:"error_message"`
+}
+
+// CreateDiskSnapshot queues a snapshot and returns the row as it exists before
+// the volume copy has run, so the id is usable immediately.
+func (c *Client) CreateDiskSnapshot(ctx context.Context, instanceID, label string) (*DiskSnapshot, error) {
+	body := map[string]string{}
+	if label != "" {
+		body["label"] = label
+	}
+	var out struct {
+		Snapshot   *DiskSnapshot `json:"snapshot"`
+		SnapshotID string        `json:"disk_snapshot_id"`
+		ID         string        `json:"id"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/instances/"+instanceID+"/disk-snapshots", body, &out); err != nil {
+		return nil, err
+	}
+	if out.Snapshot != nil {
+		return out.Snapshot, nil
+	}
+	// The create reports only an id; read the row back so every computed
+	// attribute comes from the server rather than from what we hoped it wrote.
+	id := out.SnapshotID
+	if id == "" {
+		id = out.ID
+	}
+	if id == "" {
+		return nil, fmt.Errorf("the server accepted the snapshot but named no id")
+	}
+	return c.GetDiskSnapshot(ctx, id)
+}
+
+// GetDiskSnapshot reads one snapshot. A snapshot that is gone answers 404, which
+// APIError.IsNotFound reports, so the resource can drop from state instead of
+// failing an apply.
+func (c *Client) GetDiskSnapshot(ctx context.Context, id string) (*DiskSnapshot, error) {
+	var out struct {
+		Snapshot DiskSnapshot `json:"snapshot"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/disk-snapshots/"+id, nil, &out); err != nil {
+		return nil, err
+	}
+	return &out.Snapshot, nil
+}
+
+// RenameDiskSnapshot changes the label, which is the only mutable field.
+func (c *Client) RenameDiskSnapshot(ctx context.Context, id, label string) error {
+	return c.do(ctx, http.MethodPatch, "/disk-snapshots/"+id, map[string]string{"label": label}, nil)
+}
+
+func (c *Client) DeleteDiskSnapshot(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/disk-snapshots/"+id, nil, nil)
 }

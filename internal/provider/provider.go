@@ -112,6 +112,7 @@ func (p *kividbProvider) Configure(ctx context.Context, req provider.ConfigureRe
 func (p *kividbProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewInstanceResource,
+		NewDiskSnapshotResource,
 	}
 }
 
