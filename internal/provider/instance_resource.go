@@ -291,6 +291,7 @@ func (r *instanceResource) Read(ctx context.Context, req resource.ReadRequest, r
 	}
 
 	id := state.ID.ValueString()
+
 	if id == "" {
 		// State written by an older, broken apply. There is nothing to refresh
 		// and asking the API for an empty id is a 500, so drop it and let the
@@ -333,16 +334,54 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 	}
 	id := state.ID.ValueString()
 
+	/*
+	 * Each step below waits for the one before it to finish.
+	 *
+	 * KiviDB has no "update the instance" endpoint -- it has a rename, a
+	 * resize, a replica scale, a tier upgrade and a binary upgrade, and most of
+	 * them refuse an instance that is not settled. Issued back to back, the
+	 * first one moves the database to `scaling` or `modifying` and the next is
+	 * refused by the server.
+	 *
+	 * Found by changing replica_count and tls_enabled in one apply against
+	 * production. The scale was accepted, the engine change that followed a
+	 * moment later came back "Instance must be running or stopped to upgrade the
+	 * engine", and the apply failed having applied half of what was planned --
+	 * with the practitioner left to work out which half.
+	 *
+	 * `settled` is called before each step after the first that did something,
+	 * so a single-change apply is exactly as fast as it was.
+	 */
+	didSomething := false
+	settled := func() bool {
+		if !didSomething {
+			return true
+		}
+		if _, err := r.settle(ctx, id, true); err != nil {
+			res.Diagnostics.AddError(
+				"The database did not settle between changes",
+				"An earlier part of this change was applied and the database did not come back to rest, "+
+					"so the rest was not attempted: "+explain(err),
+			)
+			return false
+		}
+		return true
+	}
+
 	if !plan.Name.Equal(state.Name) && !plan.Name.IsUnknown() {
 		if err := r.client.Rename(ctx, id, plan.Name.ValueString()); err != nil {
 			res.Diagnostics.AddError("Could not rename the database", explain(err))
 			return
 		}
+		didSomething = true
 	}
 
 	// One call for both, because the server takes them together and applying
 	// them separately would restart the database twice.
 	if !plan.DataSizeGB.Equal(state.DataSizeGB) || !plan.ThroughputMode.Equal(state.ThroughputMode) {
+		if !settled() {
+			return
+		}
 		var rr ResizeRequest
 		if !plan.DataSizeGB.Equal(state.DataSizeGB) {
 			v := plan.DataSizeGB.ValueInt64()
@@ -356,6 +395,7 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 			res.Diagnostics.AddError("Could not resize the database", explain(err))
 			return
 		}
+		didSomething = true
 	}
 
 	// Set when the tier change already carried the replica count, so the scale
@@ -383,10 +423,14 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		if !plan.ReplicaCount.IsNull() && !plan.ReplicaCount.IsUnknown() && plan.ReplicaCount.ValueInt64() > 0 {
 			replicas = plan.ReplicaCount.ValueInt64()
 		}
+		if !settled() {
+			return
+		}
 		if err := r.client.UpgradeToPro(ctx, id, replicas); err != nil {
 			res.Diagnostics.AddError("Could not change the tier", explain(err))
 			return
 		}
+		didSomething = true
 		replicasSetByUpgrade = true
 	}
 
@@ -404,10 +448,14 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 			)
 			return
 		}
+		if !settled() {
+			return
+		}
 		if err := r.client.ScaleReplicas(ctx, id, want); err != nil {
 			res.Diagnostics.AddError("Could not scale replicas", explain(err))
 			return
 		}
+		didSomething = true
 	}
 
 	// Version, Lua and TLS travel together: one restart applies all three, so
@@ -436,6 +484,9 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 		if !plan.TLSEnabled.Equal(state.TLSEnabled) {
 			br.TLSEnabled = boolPtr(plan.TLSEnabled)
+		}
+		if !settled() {
+			return
 		}
 		if err := r.client.UpgradeBinary(ctx, id, br); err != nil {
 			res.Diagnostics.AddError("Could not apply the engine change", explain(err))
