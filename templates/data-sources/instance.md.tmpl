@@ -1,0 +1,17 @@
+---
+page_title: "kividb_instance Data Source"
+subcategory: ""
+description: |-
+  Read a KiviDB database this configuration does not manage.
+---
+
+# kividb_instance (Data Source)
+
+Read a database this configuration does not manage — to depend on its endpoint,
+or to check what it is before changing something next to it.
+
+Useful when one team owns the database and another needs to point at it.
+
+{{ tffile "examples/data-sources/kividb_instance/data-source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
