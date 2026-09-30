@@ -333,18 +333,18 @@ func (f *flexFloat) UnmarshalJSON(b []byte) error {
 
 // DiskSnapshot is a point-in-time copy of an instance's data volume.
 type DiskSnapshot struct {
-	ID           string   `json:"id"`
-	InstanceID   string   `json:"instance_id"`
-	InstanceName string   `json:"instance_name"`
-	Label        string   `json:"label"`
-	Cloud        string   `json:"cloud"`
-	Region       string   `json:"region"`
+	ID           string    `json:"id"`
+	InstanceID   string    `json:"instance_id"`
+	InstanceName string    `json:"instance_name"`
+	Label        string    `json:"label"`
+	Cloud        string    `json:"cloud"`
+	Region       string    `json:"region"`
 	SizeGB       flexFloat `json:"size_gb"`
-	Status       string   `json:"status"`
-	TriggeredBy  string   `json:"triggered_by"`
-	CreatedAt    string   `json:"created_at"`
-	CompletedAt  *string  `json:"completed_at"`
-	ErrorMessage *string  `json:"error_message"`
+	Status       string    `json:"status"`
+	TriggeredBy  string    `json:"triggered_by"`
+	CreatedAt    string    `json:"created_at"`
+	CompletedAt  *string   `json:"completed_at"`
+	ErrorMessage *string   `json:"error_message"`
 }
 
 // CreateDiskSnapshot queues a snapshot and returns the row as it exists before
