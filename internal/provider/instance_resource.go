@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
@@ -193,7 +194,15 @@ is worth reading a plan that mentions it.`,
 			"status":          schema.StringAttribute{Computed: true, MarkdownDescription: "Lifecycle status."},
 			"endpoint":        schema.StringAttribute{Computed: true, MarkdownDescription: "Private endpoint."},
 			"public_endpoint": schema.StringAttribute{Computed: true, MarkdownDescription: "Public endpoint, when one is exposed."},
-			"org_id":          schema.StringAttribute{Computed: true, MarkdownDescription: "Owning organization."},
+			// UseStateForUnknown because a database does not move between
+			// organizations. Without it every plan that changes anything shows
+			// `org_id = "..." -> (known after apply)`, which is noise in the
+			// one place a practitioner is supposed to be reading carefully.
+			"org_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Owning organization.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
 		},
 	}
 }
@@ -434,8 +443,15 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 	}
 
-	inst, err := r.settle(ctx, id, plan.WaitForReady.ValueBool())
+	inst, err := r.settleUntil(ctx, id, plan.WaitForReady.ValueBool(), wantedBy(&plan, &state))
 	if err != nil {
+		// State is written from what was read, not from the plan, before the
+		// error is returned. The database exists and has some shape; recording
+		// the shape that was asked for would leave state describing something
+		// that is not there, and the next plan would then see no drift and
+		// never try again.
+		applyInstance(&state, inst)
+		res.Diagnostics.Append(res.State.Set(ctx, &state)...)
 		res.Diagnostics.AddError("The change was accepted but the database did not settle", explain(err))
 		return
 	}
@@ -483,6 +499,38 @@ func (r *instanceResource) ImportState(ctx context.Context, req resource.ImportS
 // every computed attribute empty -- and the next plan then read
 // `GET /instances/` with no id at all.
 func (r *instanceResource) settle(ctx context.Context, id string, wait bool) (*Instance, error) {
+	return r.settleUntil(ctx, id, wait, nil)
+}
+
+// settleUntil waits for the database to come to rest, and for `want` to hold.
+//
+// Waiting on the status alone is not enough. A change is queued, the status goes
+// to "modifying" and comes back to "running" -- and whether the change actually
+// landed is a separate question that the status does not answer. When the work
+// behind it fails, the database settles at its old shape and reports itself
+// healthy, because it is: it simply is not what was asked for.
+//
+// That produced the worst available failure. The provider wrote back what it
+// read, which was honest, and Terraform compared that against the plan:
+//
+//	Error: Provider produced inconsistent result after apply
+//	.data_size_gb: was cty.NumberIntVal(2), but now cty.NumberIntVal(1)
+//	This is a bug in the provider, which should be reported in the provider's
+//	own issue tracker.
+//
+// It was not a bug in the provider. A resize had been accepted and then dropped
+// on the way to the node, and the practitioner was sent to the wrong issue
+// tracker for a control-plane problem they could do nothing about from here.
+//
+// So `want` is polled alongside the status, on the same deadline: a change that
+// is merely slow is waited for, and one that never arrives is reported as what
+// it is, naming the field, what was asked for, and what the database says.
+func (r *instanceResource) settleUntil(
+	ctx context.Context,
+	id string,
+	wait bool,
+	want func(*Instance) error,
+) (*Instance, error) {
 	inst, err := r.client.GetInstance(ctx, id)
 	if err != nil {
 		return nil, err
@@ -493,13 +541,35 @@ func (r *instanceResource) settle(ctx context.Context, id string, wait bool) (*I
 
 	deadline := time.Now().Add(30 * time.Minute)
 	for {
+		atRest := false
 		switch inst.Status {
 		case "running", "stopped":
-			return inst, nil
+			atRest = true
 		case "failed":
 			return inst, fmt.Errorf("the database reported status %q", inst.Status)
 		}
+
+		// At rest and holding what was asked for: done. At rest but not holding
+		// it: keep waiting, because the status settles before some changes land
+		// and erroring on the first look would fail applies that were only slow.
+		var unmet error
+		if atRest {
+			if want == nil {
+				return inst, nil
+			}
+			if unmet = want(inst); unmet == nil {
+				return inst, nil
+			}
+		}
+
 		if time.Now().After(deadline) {
+			if unmet != nil {
+				return inst, fmt.Errorf(
+					"the change was accepted but never took effect: %w. The database is healthy and "+
+						"reports status %q, so the work behind the change did not reach it",
+					unmet, inst.Status,
+				)
+			}
 			return inst, fmt.Errorf("still %q after 30 minutes", inst.Status)
 		}
 		select {
@@ -512,6 +582,68 @@ func (r *instanceResource) settle(ctx context.Context, id string, wait bool) (*I
 			return inst, err
 		}
 		inst = next
+	}
+}
+
+// wantedBy builds the condition an update has to reach before it is finished.
+//
+// Only attributes the plan actually changed are checked. Checking everything
+// would turn any server-side normalisation the practitioner never asked about
+// into a failed apply.
+func wantedBy(plan, state *instanceModel) func(*Instance) error {
+	type expectation struct {
+		field string
+		want  string
+		got   func(*Instance) string
+	}
+	var expected []expectation
+
+	if !plan.DataSizeGB.Equal(state.DataSizeGB) && !plan.DataSizeGB.IsUnknown() {
+		expected = append(expected, expectation{
+			"data_size_gb", strconv.FormatInt(plan.DataSizeGB.ValueInt64(), 10),
+			func(i *Instance) string { return strconv.FormatInt(i.DataSizeGB, 10) },
+		})
+	}
+	if !plan.ThroughputMode.Equal(state.ThroughputMode) && !plan.ThroughputMode.IsUnknown() {
+		expected = append(expected, expectation{
+			"throughput_mode", plan.ThroughputMode.ValueString(),
+			func(i *Instance) string { return i.ThroughputMode },
+		})
+	}
+	if !plan.Tier.Equal(state.Tier) && !plan.Tier.IsUnknown() {
+		expected = append(expected, expectation{
+			"tier", plan.Tier.ValueString(),
+			func(i *Instance) string { return i.Tier },
+		})
+	}
+	if !plan.ReplicaCount.Equal(state.ReplicaCount) && !plan.ReplicaCount.IsUnknown() {
+		expected = append(expected, expectation{
+			"replica_count", strconv.FormatInt(plan.ReplicaCount.ValueInt64(), 10),
+			func(i *Instance) string { return strconv.FormatInt(i.ReplicaCount, 10) },
+		})
+	}
+	if !plan.Name.Equal(state.Name) && !plan.Name.IsUnknown() && !plan.Name.IsNull() {
+		expected = append(expected, expectation{
+			"name", plan.Name.ValueString(),
+			func(i *Instance) string {
+				if i.Name == nil {
+					return ""
+				}
+				return *i.Name
+			},
+		})
+	}
+
+	if len(expected) == 0 {
+		return nil
+	}
+	return func(i *Instance) error {
+		for _, e := range expected {
+			if got := e.got(i); got != e.want {
+				return fmt.Errorf("%s is still %s, not %s", e.field, got, e.want)
+			}
+		}
+		return nil
 	}
 }
 

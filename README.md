@@ -79,6 +79,25 @@ A few refusals are worth knowing about before you meet them:
 - **A resize needs a settled database.** If it is still provisioning, the API
   says so and the apply fails with that message rather than a status code.
 
+## When a change is accepted and does not happen
+
+An update waits for the change itself, not only for the status to settle. A
+database can return to `running` without the change having landed: the work
+behind it is queued, and if that work fails the database stays healthy at its
+old shape. The apply then says so.
+
+```
+Error: The change was accepted but the database did not settle
+
+  the change was accepted but never took effect: data_size_gb is still 1, not
+  2. The database is healthy and reports status "running", so the work behind
+  the change did not reach it
+```
+
+State is written from what was read rather than from what was planned, so the
+database is recorded as it actually is and the next plan still shows the
+difference. Nothing is silently marked done.
+
 ## Waiting
 
 By default an apply waits for the database to finish provisioning, because
