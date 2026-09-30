@@ -23,3 +23,17 @@ jobs:
           if [ -n "$unformatted" ]; then
             echo "These files need gofmt:"; echo "$unformatted"; exit 1
           fi
+
+      # The registry renders docs/ and nothing else. Nobody reads it while
+      # working on the provider, so an attribute added without regenerating is
+      # invisible here and wrong on the page every user reads. Regenerating in
+      # CI and failing on a diff is what keeps the published page honest.
+      - name: docs are generated from the schema
+        run: |
+          go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.20.1 generate --provider-name kividb
+          if ! git diff --exit-code -- docs/; then
+            echo ""
+            echo "docs/ is out of date with the provider schema. Regenerate with:"
+            echo "  go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs@v0.20.1 generate --provider-name kividb"
+            exit 1
+          fi
