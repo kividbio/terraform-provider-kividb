@@ -66,10 +66,12 @@ Plan: 1 to add, 0 to change, 1 to destroy.
 |---|---|
 | AWS | 4 GB |
 | Azure | 8 GB |
+| GCP | 8 GB |
 
-That is hardware, not pricing. Azure has no 1-vCPU sustained-performance VM, so
-the smallest honest Pro instance there is an 8 GB-shaped machine. A smaller Pro
-database is refused with both numbers and the cloud named:
+That is hardware, not pricing. Neither Azure nor GCP has a 1-vCPU
+sustained-performance machine — GCP's custom machine types start at two vCPUs and
+must be even — so the smallest honest Pro instance on either is an 8 GB-shaped
+machine. A smaller Pro database is refused with both numbers and the cloud named:
 
 ```
 Pro on aws starts at 4 GB and this instance is 2 GB. Resize it to at least
@@ -120,7 +122,9 @@ race its own teardown.
 
 ### Required
 
-- `cloud` (String) `aws` or `azure`. **Changing this replaces the database.**
+- `cloud` (String) `aws`, `azure` or `gcp`. **Changing this replaces the database.**
+
+`gcp` is accepted by the provider but is not yet available from the API, which will refuse the apply and say so.
 - `data_size_gb` (Number) Logical data size in GB. Resized in place.
 - `region` (String) Provider region, e.g. `us-east-1`. **Changing this replaces the database.**
 - `tier` (String) `essentials`, `pro` or `scale`. Upgrading is done in place.
