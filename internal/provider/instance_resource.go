@@ -112,29 +112,20 @@ is worth reading a plan that mentions it.`,
 			// saying so in the schema is the difference between a plan that
 			// shows a rebuild and an apply that silently does nothing.
 			//
-			// `gcp` is accepted here and is NOT yet available from the API, which
-			// refuses it at apply with `cloud_not_available` and a message
-			// explaining why. That is deliberate: which clouds are sellable is
-			// decided in one place on the server, and a validator here is a
-			// second gate that can only be changed by releasing a new provider.
-			// Rejecting `gcp` locally would mean every practitioner had to
-			// upgrade on the day it goes live, for a list the server already
-			// knows.
-			//
-			// The cost is that a real-but-unavailable cloud fails at apply
-			// rather than at plan. Acceptable for an attribute with three legal
-			// values; it would not be for a free-text one.
+			// The validator turns a typo into a plan-time error. It is not the
+			// gate on what is sellable: that is decided in one place on the
+			// server, which refuses an unavailable cloud or region at apply with
+			// a message saying why. A narrower list here would be a second gate
+			// that only a provider release can change.
 			"cloud": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "`aws`, `azure` or `gcp`. **Changing this replaces the database.**\n\n" +
-					"`gcp` is accepted by the provider but is not yet available from the API, which " +
-					"will refuse the apply and say so.",
+				MarkdownDescription: "`aws`, `azure` or `gcp` (Google Cloud). **Changing this replaces the database.**",
 				Validators:    []validator.String{stringvalidator.OneOf("aws", "azure", "gcp")},
 				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"region": schema.StringAttribute{
 				Required:            true,
-				MarkdownDescription: "Provider region, e.g. `us-east-1`. **Changing this replaces the database.**",
+				MarkdownDescription: "A region of the chosen cloud, e.g. `us-east-1` (AWS), `swedencentral` (Azure) or `us-central1` (Google Cloud). **Changing this replaces the database.**",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 

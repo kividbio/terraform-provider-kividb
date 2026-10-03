@@ -21,10 +21,8 @@ import (
 // that disagrees with it can only be corrected by releasing a new provider and
 // waiting for every practitioner to upgrade.
 //
-// So `gcp` is accepted here while the API still refuses it. This test pins that,
-// because the obvious "fix" on reading the validator is to remove the cloud that
-// does not work yet -- which would be correct for a week and wrong on the day it
-// goes live.
+// All three clouds the API sells are accepted. This test pins that, and that the
+// set stays closed, because the validator is easy to "tidy" in either direction.
 func TestCloudValidatorAcceptsEveryCloudTheApiCanEverSell(t *testing.T) {
 	attr := instanceSchemaCloudAttribute(t)
 
@@ -44,14 +42,10 @@ func TestCloudValidatorAcceptsEveryCloudTheApiCanEverSell(t *testing.T) {
 	}
 }
 
-// The schema has to say that `gcp` is not usable yet, because the validator no
-// longer says it by rejecting it.
-//
-// Without this the documentation reads as though all three clouds work, and the
-// first thing a practitioner learns otherwise is a failed apply. The registry
-// docs are generated from this string, so it is the only place that can carry
-// the warning.
-func TestCloudDescriptionWarnsThatGcpIsNotLiveYet(t *testing.T) {
+// The registry docs are generated from this string, so it must name every cloud
+// and must not carry the pre-launch "not yet available" warning: GCP went live
+// on 2026-10-03, and a stale warning would tell practitioners not to use it.
+func TestCloudDescriptionListsEveryCloud(t *testing.T) {
 	attr := instanceSchemaCloudAttribute(t)
 	desc := attr.MarkdownDescription
 
@@ -60,8 +54,8 @@ func TestCloudDescriptionWarnsThatGcpIsNotLiveYet(t *testing.T) {
 			t.Errorf("the cloud description must list %q: %q", needle, desc)
 		}
 	}
-	if !strings.Contains(desc, "not yet available") {
-		t.Errorf("the cloud description must say gcp is not available yet: %q", desc)
+	if strings.Contains(desc, "not yet available") {
+		t.Errorf("the cloud description still says gcp is not available: %q", desc)
 	}
 	// The replacement warning is the other thing this attribute has to carry, and
 	// it is easy to lose when rewriting the sentence around it.
