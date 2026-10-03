@@ -25,8 +25,8 @@ output "endpoint" {
   value = kividb_instance.cache.endpoint
 }
 
-# A replicated database. Pro starts at 4 GB on AWS and 8 GB on Azure, because
-# Azure has no 1-vCPU sustained-performance VM.
+# A replicated database. Pro starts at 4 GB on AWS and 8 GB on Azure and Google
+# Cloud, because neither has a 1-vCPU sustained-performance machine.
 resource "kividb_instance" "primary" {
   name          = "orders-primary"
   tier          = "pro"
@@ -35,6 +35,17 @@ resource "kividb_instance" "primary" {
   data_size_gb  = 8
   replica_count = 2
   tls_enabled   = true
+}
+
+# The same on Google Cloud. Pro starts at 8 GB there too: GCP's custom machine
+# types begin at two vCPUs.
+resource "kividb_instance" "gcp_primary" {
+  name          = "orders-gcp"
+  tier          = "pro"
+  cloud         = "gcp"
+  region        = "us-central1"
+  data_size_gb  = 8
+  replica_count = 1
 }
 ```
 
@@ -122,11 +133,9 @@ race its own teardown.
 
 ### Required
 
-- `cloud` (String) `aws`, `azure` or `gcp`. **Changing this replaces the database.**
-
-`gcp` is accepted by the provider but is not yet available from the API, which will refuse the apply and say so.
+- `cloud` (String) `aws`, `azure` or `gcp` (Google Cloud). **Changing this replaces the database.**
 - `data_size_gb` (Number) Logical data size in GB. Resized in place.
-- `region` (String) Provider region, e.g. `us-east-1`. **Changing this replaces the database.**
+- `region` (String) A region of the chosen cloud, e.g. `us-east-1` (AWS), `swedencentral` (Azure) or `us-central1` (Google Cloud). **Changing this replaces the database.**
 - `tier` (String) `essentials`, `pro` or `scale`. Upgrading is done in place.
 
 ### Optional
