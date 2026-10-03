@@ -118,10 +118,10 @@ is worth reading a plan that mentions it.`,
 			// a message saying why. A narrower list here would be a second gate
 			// that only a provider release can change.
 			"cloud": schema.StringAttribute{
-				Required: true,
+				Required:            true,
 				MarkdownDescription: "`aws`, `azure` or `gcp` (Google Cloud). **Changing this replaces the database.**",
-				Validators:    []validator.String{stringvalidator.OneOf("aws", "azure", "gcp")},
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				Validators:          []validator.String{stringvalidator.OneOf("aws", "azure", "gcp")},
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"region": schema.StringAttribute{
 				Required:            true,
