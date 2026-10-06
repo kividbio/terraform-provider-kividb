@@ -3,11 +3,14 @@ package provider
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
@@ -53,6 +56,11 @@ type instanceModel struct {
 	PublicEndpoint types.String `tfsdk:"public_endpoint"`
 	OrgID          types.String `tfsdk:"org_id"`
 
+	CloudAccountID          types.String `tfsdk:"cloud_account_id"`
+	PrivateEndpoint         types.String `tfsdk:"private_endpoint"`
+	PrivateReadonlyEndpoint types.String `tfsdk:"private_readonly_endpoint"`
+	PrivateReplicaEndpoints types.List   `tfsdk:"private_replica_endpoints"`
+
 	WaitForReady types.Bool `tfsdk:"wait_for_ready"`
 }
 
@@ -77,7 +85,7 @@ where the API has an operation for it:
 | ` + "`replica_count`" + ` | scaled in place, 1-3 |
 | ` + "`tier`" + ` | upgraded in place |
 | ` + "`kividb_version`, `lua_enabled`, `tls_enabled`" + ` | applied by a rolling restart |
-| ` + "`cloud`, `region`, `aof_enabled`, `tls_only`" + ` | **replaces the database** |
+| ` + "`cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only`" + ` | **replaces the database** |
 
 The last row is the important one. There is no operation that moves a database
 between clouds or regions, or that turns append-only persistence on after the
@@ -209,9 +217,55 @@ is worth reading a plan that mentions it.`,
 				MarkdownDescription: "Owning organization.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
+
+			// Bring your own cloud. Chosen at creation and never moved: there
+			// is no operation that carries a database's volume from one
+			// account to another.
+			"cloud_account_id": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Run the database in your own cloud account: the id of an account " +
+					"connected in the KiviDB console (see the `kividb_cloud_account` data source). " +
+					"Omit it to run the database in KiviDB's cloud. Available on AWS; Azure and " +
+					"Google Cloud are coming soon. The account must be verified and have the database's " +
+					"region enabled. **Changing this replaces the database.**",
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(uuidPattern, "must be a cloud account id (a UUID)"),
+				},
+				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+			},
+			// The private endpoints are derived from the name, the tier and
+			// the replica count, so they are carried over from state exactly
+			// when none of those change -- see useStateUnlessChanged.
+			"private_endpoint": schema.StringAttribute{
+				Computed: true,
+				MarkdownDescription: "Hostname that resolves to the primary inside your own cloud " +
+					"account's network. Set only when `cloud_account_id` is. No port: use the same " +
+					"port as `endpoint`.",
+				PlanModifiers: []planmodifier.String{useStateUnlessChanged("name", "cloud_account_id")},
+			},
+			"private_readonly_endpoint": schema.StringAttribute{
+				Computed: true,
+				MarkdownDescription: "Hostname that spreads reads across the replicas, inside your own " +
+					"cloud account's network. Pro databases in your own cloud account only.",
+				PlanModifiers: []planmodifier.String{useStateUnlessChanged("name", "cloud_account_id", "tier")},
+			},
+			"private_replica_endpoints": schema.ListAttribute{
+				ElementType: types.StringType,
+				Computed:    true,
+				MarkdownDescription: "One hostname per replica, inside your own cloud account's network. " +
+					"Pro databases in your own cloud account only; empty otherwise.",
+				PlanModifiers: []planmodifier.List{
+					useStateUnlessChanged("name", "cloud_account_id", "tier", "replica_count"),
+				},
+			},
 		},
 	}
 }
+
+// uuidPattern accepts a UUID in either case. The API answers in lower case;
+// applyInstance keeps the configured spelling so an upper-case id in a file
+// does not plan a replacement on every refresh.
+var uuidPattern = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
 func (r *instanceResource) Configure(_ context.Context, req resource.ConfigureRequest, res *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
@@ -252,6 +306,10 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 	create.LuaEnabled = boolPtr(plan.LuaEnabled)
 	create.TLSEnabled = boolPtr(plan.TLSEnabled)
 	create.TLSOnly = boolPtr(plan.TLSOnly)
+	if !plan.CloudAccountID.IsNull() && !plan.CloudAccountID.IsUnknown() {
+		v := strings.ToLower(plan.CloudAccountID.ValueString())
+		create.CloudAccountID = &v
+	}
 
 	// A key derived from the plan, not a fresh random one: Terraform retries a
 	// failed apply with the same plan, and the point is that the retry is
@@ -279,6 +337,7 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 			applyInstance(&plan, inst)
 		} else {
 			plan.ID = types.StringValue(id)
+			nullUnknownComputed(&plan)
 		}
 		res.Diagnostics.Append(res.State.Set(ctx, &plan)...)
 		res.Diagnostics.AddError("The database was created but did not become ready", explain(err))
@@ -723,6 +782,43 @@ func applyInstance(m *instanceModel, inst *Instance) {
 	m.Endpoint = stringOrNull(inst.Endpoint)
 	m.PublicEndpoint = stringOrNull(inst.PublicEndpoint)
 	m.OrgID = stringOrNull(inst.OrgID)
+
+	// Keep the configured spelling of the same id; see uuidPattern.
+	if inst.CloudAccountID == nil || m.CloudAccountID.IsNull() || m.CloudAccountID.IsUnknown() ||
+		!strings.EqualFold(m.CloudAccountID.ValueString(), *inst.CloudAccountID) {
+		m.CloudAccountID = stringOrNull(inst.CloudAccountID)
+	}
+	m.PrivateEndpoint = stringOrNull(inst.PrivateEndpoint)
+	m.PrivateReadonlyEndpoint = stringOrNull(inst.PrivateReadonlyEndpoint)
+	m.PrivateReplicaEndpoints = stringList(inst.PrivateReplicaEndpoints)
+}
+
+// nullUnknownComputed replaces the plan's unknowns with nulls, for the one path
+// that writes state without having read the database back. Terraform refuses
+// unknown values in state after an apply; the next refresh fills them in.
+func nullUnknownComputed(m *instanceModel) {
+	for _, s := range []*types.String{
+		&m.Name, &m.KividbVersion, &m.Status, &m.Endpoint, &m.PublicEndpoint, &m.OrgID,
+		&m.PrivateEndpoint, &m.PrivateReadonlyEndpoint,
+	} {
+		if s.IsUnknown() {
+			*s = types.StringNull()
+		}
+	}
+	if m.PrivateReplicaEndpoints.IsUnknown() {
+		m.PrivateReplicaEndpoints = types.ListNull(types.StringType)
+	}
+}
+
+// stringList is never null: a database with no replica endpoints has an empty
+// list, so the attribute reads the same after create, refresh and import and
+// `length(...)` works without a null check.
+func stringList(in []string) types.List {
+	elems := make([]attr.Value, 0, len(in))
+	for _, s := range in {
+		elems = append(elems, types.StringValue(s))
+	}
+	return types.ListValueMust(types.StringType, elems)
 }
 
 func stringOrNull(s *string) types.String {
@@ -774,11 +870,17 @@ func idempotencyKeyFor(plan instanceModel) string {
 	if name == "" {
 		name = "unnamed"
 	}
-	return fmt.Sprintf("tf:%s:%s:%s:%s:%d",
+	key := fmt.Sprintf("tf:%s:%s:%s:%s:%d",
 		name,
 		plan.Cloud.ValueString(),
 		plan.Region.ValueString(),
 		plan.Tier.ValueString(),
 		plan.DataSizeGB.ValueInt64(),
 	)
+	// The same database in a different account is a different database. Only
+	// appended when set, so keys for databases in KiviDB's cloud are unchanged.
+	if v := plan.CloudAccountID.ValueString(); v != "" {
+		key += ":" + strings.ToLower(v)
+	}
+	return key
 }

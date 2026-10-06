@@ -139,6 +139,13 @@ type Instance struct {
 	PrivateNetworkEnabled bool    `json:"private_network_enabled"`
 	OrgID                 *string `json:"org_id"`
 	CreatedAt             string  `json:"created_at"`
+
+	// Bring your own cloud. All null/empty on a database KiviDB hosts.
+	CloudAccountID          *string  `json:"cloud_account_id"`
+	PrivateEndpoint         *string  `json:"private_endpoint"`
+	PrivateReadonlyEndpoint *string  `json:"private_readonly_endpoint"`
+	PrivateReplicaEndpoints []string `json:"private_replica_endpoints"`
+	BillingModel            *string  `json:"billing_model"`
 }
 
 type CreateInstanceRequest struct {
@@ -154,6 +161,7 @@ type CreateInstanceRequest struct {
 	LuaEnabled     *bool   `json:"lua_enabled,omitempty"`
 	TLSEnabled     *bool   `json:"tls_enabled,omitempty"`
 	TLSOnly        *bool   `json:"tls_only,omitempty"`
+	CloudAccountID *string `json:"cloud_account_id,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -397,4 +405,39 @@ func (c *Client) RenameDiskSnapshot(ctx context.Context, id, label string) error
 
 func (c *Client) DeleteDiskSnapshot(ctx context.Context, id string) error {
 	return c.do(ctx, http.MethodDelete, "/disk-snapshots/"+id, nil, nil)
+}
+
+// CloudAccount is a cloud account the organization connected in the console,
+// so databases can run inside it.
+//
+// The API calls the name `display_name`; `name` is accepted as well so the
+// provider keeps reading if the field is ever spelled the short way.
+type CloudAccount struct {
+	ID             string   `json:"id"`
+	DisplayName    string   `json:"display_name"`
+	Name           string   `json:"name"`
+	Cloud          string   `json:"cloud"`
+	AWSAccountID   *string  `json:"aws_account_id"`
+	EnabledRegions []string `json:"enabled_regions"`
+	Status         string   `json:"status"`
+}
+
+// Label is the account's name as the console shows it.
+func (a CloudAccount) Label() string {
+	if a.DisplayName != "" {
+		return a.DisplayName
+	}
+	return a.Name
+}
+
+// ListCloudAccounts returns the organization's connected cloud accounts.
+// Disconnected ones are not listed: nothing can be placed in them.
+func (c *Client) ListCloudAccounts(ctx context.Context) ([]CloudAccount, error) {
+	var out struct {
+		CloudAccounts []CloudAccount `json:"cloud_accounts"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/cloud-accounts", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.CloudAccounts, nil
 }
