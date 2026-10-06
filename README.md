@@ -55,7 +55,7 @@ editable.
 | `replica_count` | scaled in place, 1–3 |
 | `tier` | upgraded in place |
 | `kividb_version`, `lua_enabled`, `tls_enabled` | applied by a rolling restart |
-| `cloud`, `region`, `aof_enabled`, `tls_only` | **replaces the database** |
+| `cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only` | **replaces the database** |
 
 The last row is the one to read carefully. There is no operation that moves a
 database between clouds or regions, or that turns append-only persistence on
@@ -97,6 +97,39 @@ Error: The change was accepted but the database did not settle
 State is written from what was read rather than from what was planned, so the
 database is recorded as it actually is and the next plan still shows the
 difference. Nothing is silently marked done.
+
+## Running in your own cloud account
+
+A database can run in an AWS account of your own instead of KiviDB's. Connect
+the account in the console under **Dashboard → Settings → Cloud accounts**
+(connecting grants KiviDB access to the account, so it is done signed in, not
+with an API key), then look it up and place the database in it:
+
+```hcl
+data "kividb_cloud_account" "production" {
+  name = "production"
+}
+
+resource "kividb_instance" "orders" {
+  name             = "orders"
+  tier             = "pro"
+  cloud            = "aws"
+  region           = "eu-central-1"
+  data_size_gb     = 8
+  replica_count    = 2
+  cloud_account_id = data.kividb_cloud_account.production.id
+}
+
+output "private_endpoint" {
+  value = kividb_instance.orders.private_endpoint
+}
+```
+
+`private_endpoint`, `private_readonly_endpoint` and `private_replica_endpoints`
+are hostnames that resolve inside your own network. A database stays in the
+account it was created in: changing `cloud_account_id` replaces it. The full
+example is in [examples/byoc](examples/byoc/main.tf). Azure and Google Cloud
+accounts are coming soon.
 
 ## Waiting
 

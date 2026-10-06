@@ -34,11 +34,15 @@ output "existing_endpoint" {
 ### Read-Only
 
 - `cloud` (String)
+- `cloud_account_id` (String) The connected cloud account the database runs in, or null if it runs in KiviDB's cloud.
 - `data_size_gb` (Number)
 - `endpoint` (String)
 - `kividb_version` (String)
 - `name` (String)
 - `org_id` (String)
+- `private_endpoint` (String) Hostname of the primary inside your own cloud account's network, when the database runs there.
+- `private_readonly_endpoint` (String) Read-only hostname inside your own cloud account's network (Pro only).
+- `private_replica_endpoints` (List of String) One hostname per replica inside your own cloud account's network (Pro only); empty otherwise.
 - `public_endpoint` (String)
 - `region` (String)
 - `replica_count` (Number)

@@ -1,0 +1,16 @@
+---
+page_title: "kividb_cloud_accounts Data Source"
+subcategory: ""
+description: |-
+  Every cloud account of your own connected in the KiviDB console.
+---
+
+# kividb_cloud_accounts (Data Source)
+
+Every cloud account of your own connected in the KiviDB console, oldest first.
+To pick a single account to run a database in, use
+[`kividb_cloud_account`](cloud_account.md).
+
+{{ tffile "examples/data-sources/kividb_cloud_accounts/data-source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}

@@ -58,7 +58,7 @@ resource "kividb_instance" "gcp_primary" {
 | `replica_count` | scaled in place, between 1 and 3 |
 | `tier` | upgraded in place |
 | `kividb_version`, `lua_enabled`, `tls_enabled` | applied by a rolling restart |
-| `cloud`, `region`, `aof_enabled`, `tls_only` | **replaces the database** |
+| `cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only` | **replaces the database** |
 
 The last row is the one to read carefully. Nothing moves a database between
 clouds or regions, and append-only persistence is chosen when the volume is laid
@@ -70,6 +70,59 @@ the old database and create a new, empty one.
       ~ region = "us-east-1" -> "eu-west-1" # forces replacement
 Plan: 1 to add, 0 to change, 1 to destroy.
 ```
+
+## Running in your own cloud account
+
+Set `cloud_account_id` to run the database in a cloud account of your own
+instead of KiviDB's. Connect the account in the KiviDB console first, under
+**Dashboard → Settings → Cloud accounts**, and look it up with the
+[`kividb_cloud_account`](../data-sources/cloud_account.md) data source:
+
+```terraform
+data "kividb_cloud_account" "production" {
+  name = "production"
+}
+
+resource "kividb_instance" "orders" {
+  name             = "orders"
+  tier             = "pro"
+  cloud            = "aws"
+  region           = "eu-central-1"
+  data_size_gb     = 8
+  replica_count    = 2
+  cloud_account_id = data.kividb_cloud_account.production.id
+}
+
+output "private_endpoint" {
+  value = kividb_instance.orders.private_endpoint
+}
+```
+
+AWS accounts are supported today; Azure and Google Cloud are coming soon. The
+account must be `verified`, and `region` must be one of the regions enabled for
+it. A database that cannot be placed in the account is refused at apply with
+a message saying why.
+
+The database stays in the account it was created in. **Changing
+`cloud_account_id` replaces the database**, and replacing it destroys its data.
+
+A database in your own account also has hostnames that resolve inside your
+network:
+
+| Attribute | What it points at |
+|---|---|
+| `private_endpoint` | the primary |
+| `private_readonly_endpoint` | reads spread across the replicas (Pro) |
+| `private_replica_endpoints` | one hostname per replica (Pro) |
+
+They carry no port; connect on the same port as `endpoint`. They follow the
+database's name, so a rename changes them, and `private_replica_endpoints`
+grows and shrinks with `replica_count`. For a database in KiviDB's cloud they
+are null and `private_replica_endpoints` is empty.
+
+When importing a database that runs in your own account, set
+`cloud_account_id` in the configuration to the account it runs in, or the plan
+will propose replacing it.
 
 ## Pro has a minimum size, and it differs by cloud
 
@@ -141,6 +194,7 @@ race its own teardown.
 ### Optional
 
 - `aof_enabled` (Boolean) Append-only persistence. **Changing this replaces the database**: it is chosen when the volume is laid out and there is no operation to change it after.
+- `cloud_account_id` (String) Run the database in your own cloud account: the id of an account connected in the KiviDB console (see the `kividb_cloud_account` data source). Omit it to run the database in KiviDB's cloud. Available on AWS; Azure and Google Cloud are coming soon. The account must be verified and have the database's region enabled. **Changing this replaces the database.**
 - `kividb_version` (String) Engine version, e.g. `1.0.4`. Applied by a rolling restart.
 - `lua_enabled` (Boolean) Lua scripting. Applied by a rolling restart.
 - `name` (String) Hostname-safe name, unique across KiviDB. Generated if omitted; changing it renames the database in place.
@@ -155,6 +209,9 @@ race its own teardown.
 - `endpoint` (String) Private endpoint.
 - `id` (String) The instance's id.
 - `org_id` (String) Owning organization.
+- `private_endpoint` (String) Hostname that resolves to the primary inside your own cloud account's network. Set only when `cloud_account_id` is. No port: use the same port as `endpoint`.
+- `private_readonly_endpoint` (String) Hostname that spreads reads across the replicas, inside your own cloud account's network. Pro databases in your own cloud account only.
+- `private_replica_endpoints` (List of String) One hostname per replica, inside your own cloud account's network. Pro databases in your own cloud account only; empty otherwise.
 - `public_endpoint` (String) Public endpoint, when one is exposed.
 - `status` (String) Lifecycle status.
 
