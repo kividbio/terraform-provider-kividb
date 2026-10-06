@@ -16,7 +16,7 @@ Cloud accounts**, not from Terraform: connecting one grants KiviDB access to
 the account, and that is done by a person who is signed in. There is no
 resource for it.
 
-AWS accounts are supported today. Azure and Google Cloud are coming soon.
+AWS accounts and Google Cloud projects are supported. Azure is coming soon.
 
 ```terraform
 # An AWS account connected in the KiviDB console, looked up by the name it was
@@ -56,6 +56,7 @@ disconnected are not listed.
 ### Read-Only
 
 - `aws_account_id` (String) The 12-digit AWS account id, for an AWS account.
-- `cloud` (String) The account's cloud, e.g. `aws`.
+- `cloud` (String) The account's cloud: `aws` or `gcp`.
+- `gcp_project_id` (String) The project ID, for a Google Cloud project.
 - `regions` (List of String) Regions enabled for this account. A database in it must use one of them.
 - `status` (String) `verified` once KiviDB has confirmed it can act in the account; `pending` or `failed` otherwise. Only a verified account can take new databases.

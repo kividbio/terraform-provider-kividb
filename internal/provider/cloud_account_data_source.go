@@ -35,6 +35,7 @@ type cloudAccountModel struct {
 	Name         types.String `tfsdk:"name"`
 	Cloud        types.String `tfsdk:"cloud"`
 	AWSAccountID types.String `tfsdk:"aws_account_id"`
+	GCPProjectID types.String `tfsdk:"gcp_project_id"`
 	Regions      types.List   `tfsdk:"regions"`
 	Status       types.String `tfsdk:"status"`
 }
@@ -48,7 +49,7 @@ func (d *cloudAccountDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 		MarkdownDescription: "A cloud account of your own, connected in the KiviDB console, that databases " +
 			"can run in. Look it up by `id` or by `name` (exactly one) and pass its `id` to " +
 			"`kividb_instance.cloud_account_id`. Accounts are connected in the console, not from Terraform. " +
-			"AWS accounts are supported today; Azure and Google Cloud are coming soon.",
+			"AWS accounts and Google Cloud projects are supported; Azure is coming soon.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Optional:            true,
@@ -62,11 +63,15 @@ func (d *cloudAccountDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 			},
 			"cloud": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "The account's cloud, e.g. `aws`.",
+				MarkdownDescription: "The account's cloud: `aws` or `gcp`.",
 			},
 			"aws_account_id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "The 12-digit AWS account id, for an AWS account.",
+			},
+			"gcp_project_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The project ID, for a Google Cloud project.",
 			},
 			"regions": schema.ListAttribute{
 				ElementType:         types.StringType,
@@ -137,6 +142,7 @@ func cloudAccountState(a CloudAccount) cloudAccountModel {
 		Name:         types.StringValue(a.Label()),
 		Cloud:        types.StringValue(a.Cloud),
 		AWSAccountID: stringOrNull(a.AWSAccountID),
+		GCPProjectID: stringOrNull(a.GCPProjectID),
 		Regions:      stringList(a.EnabledRegions),
 		Status:       types.StringValue(a.Status),
 	}
@@ -233,8 +239,9 @@ func (d *cloudAccountsDataSource) Schema(_ context.Context, _ datasource.SchemaR
 					Attributes: map[string]schema.Attribute{
 						"id":             schema.StringAttribute{Computed: true, MarkdownDescription: "The account's id."},
 						"name":           schema.StringAttribute{Computed: true, MarkdownDescription: "The name given in the console."},
-						"cloud":          schema.StringAttribute{Computed: true, MarkdownDescription: "The account's cloud, e.g. `aws`."},
-						"aws_account_id": schema.StringAttribute{Computed: true, MarkdownDescription: "The 12-digit AWS account id."},
+						"cloud":          schema.StringAttribute{Computed: true, MarkdownDescription: "The account's cloud: `aws` or `gcp`."},
+						"aws_account_id": schema.StringAttribute{Computed: true, MarkdownDescription: "The 12-digit AWS account id, for an AWS account."},
+						"gcp_project_id": schema.StringAttribute{Computed: true, MarkdownDescription: "The project ID, for a Google Cloud project."},
 						"regions": schema.ListAttribute{
 							ElementType:         types.StringType,
 							Computed:            true,

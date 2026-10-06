@@ -128,8 +128,8 @@ output "private_endpoint" {
 `private_endpoint`, `private_readonly_endpoint` and `private_replica_endpoints`
 are hostnames that resolve inside your own network. A database stays in the
 account it was created in: changing `cloud_account_id` replaces it. The full
-example is in [examples/byoc](examples/byoc/main.tf). Azure and Google Cloud
-accounts are coming soon.
+example is in [examples/byoc](examples/byoc/main.tf). AWS accounts and Google
+Cloud projects are supported; Azure accounts are coming soon.
 
 ## Waiting
 

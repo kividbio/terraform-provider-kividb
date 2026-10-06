@@ -60,9 +60,9 @@ output "private_endpoint" {
 }
 ```
 
-AWS accounts are supported today; Azure and Google Cloud are coming soon. The
-account must be `verified`, and `region` must be one of the regions enabled for
-it. A database that cannot be placed in the account is refused at apply with
+AWS accounts and Google Cloud projects are supported; Azure is coming soon.
+Set `cloud` to the account's cloud (`aws` or `gcp`). The account must be
+`verified`, and `region` must be one of the regions enabled for it. A database that cannot be placed in the account is refused at apply with
 a message saying why.
 
 The database stays in the account it was created in. **Changing

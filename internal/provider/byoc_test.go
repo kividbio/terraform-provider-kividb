@@ -354,6 +354,31 @@ func TestCloudAccountLookup(t *testing.T) {
 	}
 }
 
+func TestCloudAccountReadsAGoogleCloudProject(t *testing.T) {
+	srv := cloudAccountsServer(t, http.StatusOK, `{"cloud_accounts":[
+		{"id":"`+testAccountID+`","cloud":"gcp","display_name":"analytics","aws_account_id":null,
+		 "gcp_project_id":"acme-prod-123","enabled_regions":["us-east1"],"status":"verified"}]}`)
+	defer srv.Close()
+	ctx := context.Background()
+
+	d := &cloudAccountDataSource{client: NewClient(srv.URL, "k")}
+	sch := dataSourceSchema(t, d)
+	cfg := tfsdk.Config{Schema: sch, Raw: objectOf(t, sch.Type().TerraformType(ctx),
+		map[string]tftypes.Value{"name": tftypes.NewValue(tftypes.String, "analytics")}, false)}
+	res := datasource.ReadResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}}
+	d.Read(ctx, datasource.ReadRequest{Config: cfg}, &res)
+	failOn(t, res.Diagnostics)
+
+	var got cloudAccountModel
+	failOn(t, res.State.Get(ctx, &got))
+	if got.Cloud.ValueString() != "gcp" || got.GCPProjectID.ValueString() != "acme-prod-123" {
+		t.Errorf("a Google Cloud project must read its cloud and project id: %+v", got)
+	}
+	if !got.AWSAccountID.IsNull() {
+		t.Errorf("a Google Cloud project has no AWS account id, got %v", got.AWSAccountID)
+	}
+}
+
 func TestCloudAccountRequiresExactlyOneOfIDAndName(t *testing.T) {
 	ctx := context.Background()
 	d := &cloudAccountDataSource{}

@@ -418,6 +418,7 @@ type CloudAccount struct {
 	Name           string   `json:"name"`
 	Cloud          string   `json:"cloud"`
 	AWSAccountID   *string  `json:"aws_account_id"`
+	GCPProjectID   *string  `json:"gcp_project_id"`
 	EnabledRegions []string `json:"enabled_regions"`
 	Status         string   `json:"status"`
 }
