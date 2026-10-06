@@ -119,5 +119,7 @@ func (p *kividbProvider) Resources(_ context.Context) []func() resource.Resource
 func (p *kividbProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewInstanceDataSource,
+		NewCloudAccountDataSource,
+		NewCloudAccountsDataSource,
 	}
 }

@@ -35,6 +35,11 @@ type instanceDataSourceModel struct {
 	PublicEndpoint types.String `tfsdk:"public_endpoint"`
 	TLSEnabled     types.Bool   `tfsdk:"tls_enabled"`
 	OrgID          types.String `tfsdk:"org_id"`
+
+	CloudAccountID          types.String `tfsdk:"cloud_account_id"`
+	PrivateEndpoint         types.String `tfsdk:"private_endpoint"`
+	PrivateReadonlyEndpoint types.String `tfsdk:"private_readonly_endpoint"`
+	PrivateReplicaEndpoints types.List   `tfsdk:"private_replica_endpoints"`
 }
 
 func (d *instanceDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, res *datasource.MetadataResponse) {
@@ -60,6 +65,23 @@ func (d *instanceDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 			"public_endpoint": schema.StringAttribute{Computed: true},
 			"tls_enabled":     schema.BoolAttribute{Computed: true},
 			"org_id":          schema.StringAttribute{Computed: true},
+			"cloud_account_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The connected cloud account the database runs in, or null if it runs in KiviDB's cloud.",
+			},
+			"private_endpoint": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Hostname of the primary inside your own cloud account's network, when the database runs there.",
+			},
+			"private_readonly_endpoint": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "Read-only hostname inside your own cloud account's network (Pro only).",
+			},
+			"private_replica_endpoints": schema.ListAttribute{
+				ElementType:         types.StringType,
+				Computed:            true,
+				MarkdownDescription: "One hostname per replica inside your own cloud account's network (Pro only); empty otherwise.",
+			},
 		},
 	}
 }
@@ -100,5 +122,9 @@ func (d *instanceDataSource) Read(ctx context.Context, req datasource.ReadReques
 	cfg.PublicEndpoint = stringOrNull(inst.PublicEndpoint)
 	cfg.TLSEnabled = types.BoolValue(inst.TLSEnabled)
 	cfg.OrgID = stringOrNull(inst.OrgID)
+	cfg.CloudAccountID = stringOrNull(inst.CloudAccountID)
+	cfg.PrivateEndpoint = stringOrNull(inst.PrivateEndpoint)
+	cfg.PrivateReadonlyEndpoint = stringOrNull(inst.PrivateReadonlyEndpoint)
+	cfg.PrivateReplicaEndpoints = stringList(inst.PrivateReplicaEndpoints)
 	res.Diagnostics.Append(res.State.Set(ctx, &cfg)...)
 }
