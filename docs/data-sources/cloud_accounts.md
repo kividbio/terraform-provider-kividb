@@ -32,8 +32,9 @@ output "verified_cloud_accounts" {
 
 Read-Only:
 
-- `aws_account_id` (String) The 12-digit AWS account id.
-- `cloud` (String) The account's cloud, e.g. `aws`.
+- `aws_account_id` (String) The 12-digit AWS account id, for an AWS account.
+- `cloud` (String) The account's cloud: `aws` or `gcp`.
+- `gcp_project_id` (String) The project ID, for a Google Cloud project.
 - `id` (String) The account's id.
 - `name` (String) The name given in the console.
 - `regions` (List of String) Regions enabled for this account.
