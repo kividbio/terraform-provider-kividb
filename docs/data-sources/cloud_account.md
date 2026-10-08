@@ -16,7 +16,11 @@ Cloud accounts**, not from Terraform: connecting one grants KiviDB access to
 the account, and that is done by a person who is signed in. There is no
 resource for it.
 
-AWS accounts and Google Cloud projects are supported. Azure is coming soon.
+AWS accounts, Google Cloud projects and Azure subscriptions are supported. An
+Azure connection is a resource group in a subscription; `azure_tenant_id`,
+`azure_subscription_id` and `azure_resource_group` say which, and
+`azure_snapshot_account` and `azure_snapshot_container` name the storage its
+snapshots are kept in.
 
 ```terraform
 # An AWS account connected in the KiviDB console, looked up by the name it was
@@ -27,6 +31,16 @@ data "kividb_cloud_account" "production" {
 
 output "cloud_account_regions" {
   value = data.kividb_cloud_account.production.regions
+}
+
+# An Azure subscription is looked up the same way. Its tenant, subscription and
+# resource group are read back with it.
+data "kividb_cloud_account" "emea" {
+  name = "emea"
+}
+
+output "azure_resource_group" {
+  value = data.kividb_cloud_account.emea.azure_resource_group
 }
 ```
 
@@ -41,7 +55,7 @@ them.
 ## Status
 
 Only a `verified` account can take new databases. Reading one that is `pending`
-or `failed` succeeds with a warning, so a plan can still show what it found;
+or `broken` succeeds with a warning, so a plan can still show what it found;
 creating a database in it is refused until it is verified. Accounts that were
 disconnected are not listed.
 
@@ -56,7 +70,12 @@ disconnected are not listed.
 ### Read-Only
 
 - `aws_account_id` (String) The 12-digit AWS account id, for an AWS account.
-- `cloud` (String) The account's cloud: `aws` or `gcp`.
+- `azure_resource_group` (String) The resource group databases are created in, for an Azure subscription.
+- `azure_snapshot_account` (String) The storage account snapshots are kept in, for an Azure subscription.
+- `azure_snapshot_container` (String) The blob container in `azure_snapshot_account` snapshots are kept in, for an Azure subscription.
+- `azure_subscription_id` (String) The subscription ID, for an Azure subscription.
+- `azure_tenant_id` (String) The Microsoft Entra tenant ID, for an Azure subscription.
+- `cloud` (String) The account's cloud: `aws`, `azure` or `gcp`.
 - `gcp_project_id` (String) The project ID, for a Google Cloud project.
 - `regions` (List of String) Regions enabled for this account. A database in it must use one of them.
-- `status` (String) `verified` once KiviDB has confirmed it can act in the account; `pending` or `failed` otherwise. Only a verified account can take new databases.
+- `status` (String) `verified` once KiviDB has confirmed it can act in the account; `pending` or `broken` otherwise. Only a verified account can take new databases.

@@ -48,11 +48,10 @@ provider waits between steps. A one-attribute apply is as fast as it ever was.
 
 ## Running in your own cloud account
 
-A database can run in an AWS account or a Google Cloud project of your own,
-rather than in KiviDB's.
+A database can run in an AWS account, a Google Cloud project or an Azure
+subscription of your own, rather than in KiviDB's.
 Connect the account in the console, look it up with the
 [`kividb_cloud_account`](data-sources/cloud_account.md) data source, and set
-`cloud_account_id` on [`kividb_instance`](resources/instance.md). Azure
-accounts are coming soon.
+`cloud_account_id` on [`kividb_instance`](resources/instance.md).
 
 {{ .SchemaMarkdown | trimspace }}

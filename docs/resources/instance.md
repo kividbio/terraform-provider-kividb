@@ -98,8 +98,8 @@ output "private_endpoint" {
 }
 ```
 
-AWS accounts and Google Cloud projects are supported; Azure is coming soon.
-Set `cloud` to the account's cloud (`aws` or `gcp`). The account must be
+AWS accounts, Google Cloud projects and Azure subscriptions are supported.
+Set `cloud` to the account's cloud (`aws`, `gcp` or `azure`). The account must be
 `verified`, and `region` must be one of the regions enabled for it. A database that cannot be placed in the account is refused at apply with
 a message saying why.
 
@@ -194,7 +194,7 @@ race its own teardown.
 ### Optional
 
 - `aof_enabled` (Boolean) Append-only persistence. **Changing this replaces the database**: it is chosen when the volume is laid out and there is no operation to change it after.
-- `cloud_account_id` (String) Run the database in your own cloud account: the id of an account connected in the KiviDB console (see the `kividb_cloud_account` data source). Omit it to run the database in KiviDB's cloud. Available on AWS and Google Cloud (set `cloud` to the account's cloud); Azure is coming soon. The account must be verified and have the database's region enabled. **Changing this replaces the database.**
+- `cloud_account_id` (String) Run the database in your own cloud account: the id of an account connected in the KiviDB console (see the `kividb_cloud_account` data source). Omit it to run the database in KiviDB's cloud. Available on AWS, Azure and Google Cloud (set `cloud` to the account's cloud). The account must be verified and have the database's region enabled. **Changing this replaces the database.**
 - `kividb_version` (String) Engine version, e.g. `1.0.4`. Applied by a rolling restart.
 - `lua_enabled` (Boolean) Lua scripting. Applied by a rolling restart.
 - `name` (String) Hostname-safe name, unique across KiviDB. Generated if omitted; changing it renames the database in place.

@@ -421,6 +421,14 @@ type CloudAccount struct {
 	GCPProjectID   *string  `json:"gcp_project_id"`
 	EnabledRegions []string `json:"enabled_regions"`
 	Status         string   `json:"status"`
+
+	// An Azure connection is a resource group in a subscription, in a tenant,
+	// plus the storage account and blob container its snapshots are kept in.
+	AzureTenantID          *string `json:"azure_tenant_id"`
+	AzureSubscriptionID    *string `json:"azure_subscription_id"`
+	AzureResourceGroup     *string `json:"azure_resource_group"`
+	AzureSnapshotAccount   *string `json:"azure_snapshot_account"`
+	AzureSnapshotContainer *string `json:"azure_snapshot_container"`
 }
 
 // Label is the account's name as the console shows it.

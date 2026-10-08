@@ -100,7 +100,8 @@ difference. Nothing is silently marked done.
 
 ## Running in your own cloud account
 
-A database can run in an AWS account of your own instead of KiviDB's. Connect
+A database can run in an AWS account, Google Cloud project or Azure subscription
+of your own instead of KiviDB's. Connect
 the account in the console under **Dashboard → Settings → Cloud accounts**
 (connecting grants KiviDB access to the account, so it is done signed in, not
 with an API key), then look it up and place the database in it:
@@ -128,8 +129,8 @@ output "private_endpoint" {
 `private_endpoint`, `private_readonly_endpoint` and `private_replica_endpoints`
 are hostnames that resolve inside your own network. A database stays in the
 account it was created in: changing `cloud_account_id` replaces it. The full
-example is in [examples/byoc](examples/byoc/main.tf). AWS accounts and Google
-Cloud projects are supported; Azure accounts are coming soon.
+example is in [examples/byoc](examples/byoc/main.tf). AWS accounts, Google
+Cloud projects and Azure subscriptions are supported.
 
 ## Waiting
 

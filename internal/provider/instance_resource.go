@@ -225,8 +225,8 @@ is worth reading a plan that mentions it.`,
 				Optional: true,
 				MarkdownDescription: "Run the database in your own cloud account: the id of an account " +
 					"connected in the KiviDB console (see the `kividb_cloud_account` data source). " +
-					"Omit it to run the database in KiviDB's cloud. Available on AWS and Google Cloud " +
-					"(set `cloud` to the account's cloud); Azure is coming soon. The account must be " +
+					"Omit it to run the database in KiviDB's cloud. Available on AWS, Azure and Google Cloud " +
+					"(set `cloud` to the account's cloud). The account must be " +
 					"verified and have the database's region enabled. **Changing this replaces the database.**",
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(uuidPattern, "must be a cloud account id (a UUID)"),

@@ -16,7 +16,11 @@ Cloud accounts**, not from Terraform: connecting one grants KiviDB access to
 the account, and that is done by a person who is signed in. There is no
 resource for it.
 
-AWS accounts and Google Cloud projects are supported. Azure is coming soon.
+AWS accounts, Google Cloud projects and Azure subscriptions are supported. An
+Azure connection is a resource group in a subscription; `azure_tenant_id`,
+`azure_subscription_id` and `azure_resource_group` say which, and
+`azure_snapshot_account` and `azure_snapshot_container` name the storage its
+snapshots are kept in.
 
 {{ tffile "examples/data-sources/kividb_cloud_account/data-source.tf" }}
 
@@ -31,7 +35,7 @@ them.
 ## Status
 
 Only a `verified` account can take new databases. Reading one that is `pending`
-or `failed` succeeds with a warning, so a plan can still show what it found;
+or `broken` succeeds with a warning, so a plan can still show what it found;
 creating a database in it is refused until it is verified. Accounts that were
 disconnected are not listed.
 
