@@ -46,6 +46,50 @@ type APIError struct {
 	Status  int
 	Code    string
 	Message string
+
+	// Where a snapshot lives, sent with the snapshot_*_mismatch refusals so the
+	// diagnostic can name the cloud, region or account that would work.
+	// HasSnapshotPlacement is false when the refusal carried none of it;
+	// SnapshotCloudAccountID is nil both when absent and for KiviDB's cloud, and
+	// HasSnapshotAccount tells those apart.
+	SnapshotCloud          string
+	SnapshotRegion         string
+	SnapshotCloudAccountID *string
+	HasSnapshotAccount     bool
+}
+
+// decodeAPIError reads the server's error envelope:
+//
+//	{"error": {"code": "...", "message": "...", "snapshot_region": "..."}}
+//
+// Anything that does not decode still produces an error carrying the status.
+func decodeAPIError(status int, raw []byte) *APIError {
+	apiErr := &APIError{Status: status}
+	var envelope struct {
+		Error struct {
+			Code                   string          `json:"code"`
+			Message                string          `json:"message"`
+			SnapshotCloud          string          `json:"snapshot_cloud"`
+			SnapshotRegion         string          `json:"snapshot_region"`
+			SnapshotCloudAccountID json.RawMessage `json:"snapshot_cloud_account_id"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &envelope) != nil {
+		return apiErr
+	}
+	e := envelope.Error
+	apiErr.Code = e.Code
+	apiErr.Message = e.Message
+	apiErr.SnapshotCloud = e.SnapshotCloud
+	apiErr.SnapshotRegion = e.SnapshotRegion
+	if len(e.SnapshotCloudAccountID) > 0 {
+		apiErr.HasSnapshotAccount = true
+		var id *string
+		if json.Unmarshal(e.SnapshotCloudAccountID, &id) == nil && id != nil && *id != "" {
+			apiErr.SnapshotCloudAccountID = id
+		}
+	}
+	return apiErr
 }
 
 func (e *APIError) Error() string {
@@ -94,18 +138,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 	}
 
 	if res.StatusCode >= 400 {
-		apiErr := &APIError{Status: res.StatusCode}
-		var envelope struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if json.Unmarshal(raw, &envelope) == nil {
-			apiErr.Code = envelope.Error.Code
-			apiErr.Message = envelope.Error.Message
-		}
-		return apiErr
+		return decodeAPIError(res.StatusCode, raw)
 	}
 
 	if out != nil && len(raw) > 0 {
@@ -142,6 +175,7 @@ type Instance struct {
 
 	// Bring your own cloud. All null/empty on a database KiviDB hosts.
 	CloudAccountID          *string  `json:"cloud_account_id"`
+	CloudAccountName        *string  `json:"cloud_account_name"`
 	PrivateEndpoint         *string  `json:"private_endpoint"`
 	PrivateReadonlyEndpoint *string  `json:"private_readonly_endpoint"`
 	PrivateReplicaEndpoints []string `json:"private_replica_endpoints"`
@@ -162,6 +196,13 @@ type CreateInstanceRequest struct {
 	TLSEnabled     *bool   `json:"tls_enabled,omitempty"`
 	TLSOnly        *bool   `json:"tls_only,omitempty"`
 	CloudAccountID *string `json:"cloud_account_id,omitempty"`
+
+	// A new database made from a snapshot. At most one of the two. The API
+	// places the database in the snapshot's cloud account when
+	// cloud_account_id is omitted, and refuses any other cloud, region or
+	// account than the snapshot's own.
+	RestoreFromSnapshotID    *string `json:"restore_from_snapshot_id,omitempty"`
+	RestoreFromKdbSnapshotID *string `json:"restore_from_kdb_snapshot_id,omitempty"`
 }
 
 type createInstanceResponse struct {
@@ -211,18 +252,7 @@ func (c *Client) doWithIdempotency(ctx context.Context, method, path string, bod
 		return fmt.Errorf("reading response: %w", err)
 	}
 	if res.StatusCode >= 400 {
-		apiErr := &APIError{Status: res.StatusCode}
-		var envelope struct {
-			Error struct {
-				Code    string `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if json.Unmarshal(raw, &envelope) == nil {
-			apiErr.Code = envelope.Error.Code
-			apiErr.Message = envelope.Error.Message
-		}
-		return apiErr
+		return decodeAPIError(res.StatusCode, raw)
 	}
 	if out != nil && len(raw) > 0 {
 		return json.Unmarshal(raw, out)
@@ -353,6 +383,11 @@ type DiskSnapshot struct {
 	CreatedAt    string    `json:"created_at"`
 	CompletedAt  *string   `json:"completed_at"`
 	ErrorMessage *string   `json:"error_message"`
+
+	// The cloud account the snapshot lives in; null for KiviDB's cloud. A
+	// snapshot is restored only in its own account.
+	CloudAccountID   *string `json:"cloud_account_id"`
+	CloudAccountName *string `json:"cloud_account_name"`
 }
 
 // CreateDiskSnapshot queues a snapshot and returns the row as it exists before
@@ -421,6 +456,14 @@ type CloudAccount struct {
 	GCPProjectID   *string  `json:"gcp_project_id"`
 	EnabledRegions []string `json:"enabled_regions"`
 	Status         string   `json:"status"`
+
+	// An Azure connection is a resource group in a subscription, in a tenant,
+	// plus the storage account and blob container its snapshots are kept in.
+	AzureTenantID          *string `json:"azure_tenant_id"`
+	AzureSubscriptionID    *string `json:"azure_subscription_id"`
+	AzureResourceGroup     *string `json:"azure_resource_group"`
+	AzureSnapshotAccount   *string `json:"azure_snapshot_account"`
+	AzureSnapshotContainer *string `json:"azure_snapshot_container"`
 }
 
 // Label is the account's name as the console shows it.
@@ -441,4 +484,53 @@ func (c *Client) ListCloudAccounts(ctx context.Context) ([]CloudAccount, error) 
 		return nil, err
 	}
 	return out.CloudAccounts, nil
+}
+
+// SnapshotKind names the two kinds of snapshot a database can be made from.
+type SnapshotKind string
+
+const (
+	SnapshotKindDisk SnapshotKind = "disk"
+	SnapshotKindKdb  SnapshotKind = "KDB"
+)
+
+// SnapshotPlacement is where a snapshot lives: the only cloud, region and
+// cloud account a database can be made from it in.
+type SnapshotPlacement struct {
+	Cloud            string  `json:"cloud"`
+	Region           string  `json:"region"`
+	CloudAccountID   *string `json:"cloud_account_id"`
+	CloudAccountName *string `json:"cloud_account_name"`
+}
+
+// AccountLabel is how a diagnostic names the snapshot's account.
+func (p SnapshotPlacement) AccountLabel() string {
+	if p.CloudAccountID == nil || *p.CloudAccountID == "" {
+		return "KiviDB's cloud"
+	}
+	if p.CloudAccountName != nil && *p.CloudAccountName != "" {
+		return fmt.Sprintf("%q (%s)", *p.CloudAccountName, *p.CloudAccountID)
+	}
+	return "connected cloud account " + *p.CloudAccountID
+}
+
+// SnapshotPlacementOf reads where a snapshot lives, from its restore plan.
+//
+// The restore plan rather than GET /disk-snapshots/:id, because it resolves
+// every snapshot the create accepts -- including the older kind the plain read
+// does not list -- and answers the same shape for disk and KDB snapshots. A
+// snapshot that exists but has not finished answers 409 snapshot_not_ready.
+func (c *Client) SnapshotPlacementOf(ctx context.Context, kind SnapshotKind, id string) (*SnapshotPlacement, error) {
+	prefix := "/disk-snapshots/"
+	if kind == SnapshotKindKdb {
+		prefix = "/kdb-snapshots/"
+	}
+	var out SnapshotPlacement
+	if err := c.do(ctx, http.MethodGet, prefix+id+"/restore-plan", nil, &out); err != nil {
+		return nil, err
+	}
+	if out.CloudAccountID != nil && *out.CloudAccountID == "" {
+		out.CloudAccountID = nil
+	}
+	return &out, nil
 }

@@ -56,6 +56,7 @@ editable.
 | `tier` | upgraded in place |
 | `kividb_version`, `lua_enabled`, `tls_enabled` | applied by a rolling restart |
 | `cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only` | **replaces the database** |
+| `restore_from_snapshot_id`, `restore_from_kdb_snapshot_id` | **replaces the database** when changed to a different snapshot |
 
 The last row is the one to read carefully. There is no operation that moves a
 database between clouds or regions, or that turns append-only persistence on
@@ -100,7 +101,8 @@ difference. Nothing is silently marked done.
 
 ## Running in your own cloud account
 
-A database can run in an AWS account of your own instead of KiviDB's. Connect
+A database can run in an AWS account, Google Cloud project or Azure subscription
+of your own instead of KiviDB's. Connect
 the account in the console under **Dashboard → Settings → Cloud accounts**
 (connecting grants KiviDB access to the account, so it is done signed in, not
 with an API key), then look it up and place the database in it:
@@ -127,9 +129,11 @@ output "private_endpoint" {
 
 `private_endpoint`, `private_readonly_endpoint` and `private_replica_endpoints`
 are hostnames that resolve inside your own network. A database stays in the
-account it was created in: changing `cloud_account_id` replaces it. The full
-example is in [examples/byoc](examples/byoc/main.tf). AWS accounts and Google
-Cloud projects are supported; Azure accounts are coming soon.
+account it was created in: changing `cloud_account_id` to a different account
+replaces it, and removing it from the configuration leaves the database where
+it is. The full
+example is in [examples/byoc](examples/byoc/main.tf). AWS accounts, Google
+Cloud projects and Azure subscriptions are supported.
 
 ## Waiting
 
@@ -191,3 +195,23 @@ one, because nothing re-points a copy that has already been taken.
 By default the apply waits for the copy to finish, since a snapshot still being
 written cannot be restored from. Set `wait_for_ready = false` to return as soon
 as the server accepts it.
+
+A new database can be created from a snapshot with `restore_from_snapshot_id`
+(or from a KDB snapshot with `restore_from_kdb_snapshot_id`):
+
+```hcl
+resource "kividb_instance" "copy" {
+  name                     = "orders-copy"
+  tier                     = "essentials"
+  cloud                    = "aws"
+  region                   = "us-east-1"
+  data_size_gb             = 8
+  restore_from_snapshot_id = kividb_disk_snapshot.nightly.id
+}
+```
+
+A snapshot is restored only where it lives: its own cloud, region and cloud
+account. Leave `cloud_account_id` unset and the database is placed in the
+snapshot's account; set it, and it must be that account. A mismatch is refused
+in the plan when the snapshot's id is known by then, and by the API at apply
+otherwise.

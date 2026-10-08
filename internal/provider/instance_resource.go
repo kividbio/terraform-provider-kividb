@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
@@ -28,6 +29,7 @@ var (
 	_ resource.Resource                = (*instanceResource)(nil)
 	_ resource.ResourceWithConfigure   = (*instanceResource)(nil)
 	_ resource.ResourceWithImportState = (*instanceResource)(nil)
+	_ resource.ResourceWithModifyPlan  = (*instanceResource)(nil)
 )
 
 func NewInstanceResource() resource.Resource { return &instanceResource{} }
@@ -57,9 +59,13 @@ type instanceModel struct {
 	OrgID          types.String `tfsdk:"org_id"`
 
 	CloudAccountID          types.String `tfsdk:"cloud_account_id"`
+	CloudAccountName        types.String `tfsdk:"cloud_account_name"`
 	PrivateEndpoint         types.String `tfsdk:"private_endpoint"`
 	PrivateReadonlyEndpoint types.String `tfsdk:"private_readonly_endpoint"`
 	PrivateReplicaEndpoints types.List   `tfsdk:"private_replica_endpoints"`
+
+	RestoreFromSnapshotID    types.String `tfsdk:"restore_from_snapshot_id"`
+	RestoreFromKdbSnapshotID types.String `tfsdk:"restore_from_kdb_snapshot_id"`
 
 	WaitForReady types.Bool `tfsdk:"wait_for_ready"`
 }
@@ -86,12 +92,23 @@ where the API has an operation for it:
 | ` + "`tier`" + ` | upgraded in place |
 | ` + "`kividb_version`, `lua_enabled`, `tls_enabled`" + ` | applied by a rolling restart |
 | ` + "`cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only`" + ` | **replaces the database** |
+| ` + "`restore_from_snapshot_id`, `restore_from_kdb_snapshot_id`" + ` | **replaces the database** when changed to a different snapshot |
 
-The last row is the important one. There is no operation that moves a database
-between clouds or regions, or that turns append-only persistence on after the
-fact, so Terraform will plan a destroy and create for those. That is shown in
-the plan rather than discovered afterwards -- and because it destroys data, it
-is worth reading a plan that mentions it.`,
+The last rows are the important ones. There is no operation that moves a
+database between clouds or regions, or that turns append-only persistence on
+after the fact, so Terraform will plan a destroy and create for those. That is
+shown in the plan rather than discovered afterwards -- and because it destroys
+data, it is worth reading a plan that mentions it.
+
+### Creating a database from a snapshot
+
+Set ` + "`restore_from_snapshot_id`" + ` (a disk snapshot) or
+` + "`restore_from_kdb_snapshot_id`" + ` (a KDB snapshot) to create the database
+with that snapshot's data. A snapshot is restored only where it lives: the same
+cloud, region and cloud account. Leave ` + "`cloud_account_id`" + ` unset and the
+database is placed in the snapshot's account; set it, and it must be that
+account. When the snapshot's id is known at plan time the provider checks this
+in the plan, otherwise the API refuses a mismatch at apply.`,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -221,33 +238,90 @@ is worth reading a plan that mentions it.`,
 			// Bring your own cloud. Chosen at creation and never moved: there
 			// is no operation that carries a database's volume from one
 			// account to another.
+			//
+			// Computed as well as optional because a database made from a
+			// snapshot inherits the snapshot's account when this is unset. For
+			// any other new database, unset still means KiviDB's cloud, planned
+			// as null; an existing database keeps the account it is in -- see
+			// cloudAccountFromSnapshotOrState.
 			"cloud_account_id": schema.StringAttribute{
 				Optional: true,
+				Computed: true,
 				MarkdownDescription: "Run the database in your own cloud account: the id of an account " +
 					"connected in the KiviDB console (see the `kividb_cloud_account` data source). " +
-					"Omit it to run the database in KiviDB's cloud. Available on AWS and Google Cloud " +
-					"(set `cloud` to the account's cloud); Azure is coming soon. The account must be " +
-					"verified and have the database's region enabled. **Changing this replaces the database.**",
+					"Omit it to run the database in KiviDB's cloud. Available on AWS, Azure and Google Cloud " +
+					"(set `cloud` to the account's cloud). The account must be " +
+					"verified and have the database's region enabled. With `restore_from_snapshot_id` or " +
+					"`restore_from_kdb_snapshot_id`, omitting it places the database in the snapshot's " +
+					"account, and setting it to any other account is refused. " +
+					"**Changing this to a different account replaces the database.** Removing it from the " +
+					"configuration of a database that exists does not move the database: it stays in the " +
+					"account it is in.",
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(uuidPattern, "must be a cloud account id (a UUID)"),
 				},
-				PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()},
+				PlanModifiers: []planmodifier.String{
+					cloudAccountFromSnapshotOrState(),
+					replaceWhenAccountChanges(),
+				},
+			},
+			// Planned in ModifyPlan, where the final cloud_account_id is known.
+			"cloud_account_name": schema.StringAttribute{
+				Computed: true,
+				MarkdownDescription: "The name of the cloud account in `cloud_account_id`, as the KiviDB " +
+					"console shows it. Null for a database in KiviDB's cloud.",
+			},
+
+			// A new database made from a snapshot. Read only at creation: the
+			// API keeps no record of which snapshot a database came from, so
+			// these are kept from configuration rather than read back.
+			"restore_from_snapshot_id": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Create the database from this disk snapshot (see `kividb_disk_snapshot`). " +
+					"The database must be in the snapshot's cloud, region and cloud account, and at least " +
+					"as large as the snapshot needs; the API refuses anything else. Read only when the " +
+					"database is created. **Changing it to a different snapshot replaces the database**; " +
+					"removing it, or adding it to a database that already exists, changes nothing.",
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(uuidPattern, "must be a disk snapshot id (a UUID)"),
+					stringvalidator.ConflictsWith(path.MatchRoot("restore_from_kdb_snapshot_id")),
+				},
+				PlanModifiers: []planmodifier.String{replaceWhenSnapshotChanges()},
+			},
+			"restore_from_kdb_snapshot_id": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Create the database seeded from this KDB snapshot (a `.kdb` export). " +
+					"Same rule as `restore_from_snapshot_id`: the snapshot's cloud, region and cloud " +
+					"account only. Read only when the database is created. **Changing it to a different " +
+					"snapshot replaces the database**; removing it, or adding it to a database that " +
+					"already exists, changes nothing.",
+				Validators: []validator.String{
+					stringvalidator.RegexMatches(uuidPattern, "must be a KDB snapshot id (a UUID)"),
+				},
+				PlanModifiers: []planmodifier.String{replaceWhenSnapshotChanges()},
 			},
 			// The private endpoints are derived from the name, the tier and
 			// the replica count, so they are carried over from state exactly
 			// when none of those change -- see useStateUnlessChanged.
+			//
+			// cloud_account_id is not among the inputs. It is computed, so an
+			// unset one is still unknown while these modifiers run, and would
+			// make every endpoint "(known after apply)" on every plan. Nothing
+			// is lost: a different account replaces the database, Terraform
+			// plans a replacement as a create, and a create has no state for
+			// these to be carried over from.
 			"private_endpoint": schema.StringAttribute{
 				Computed: true,
 				MarkdownDescription: "Hostname that resolves to the primary inside your own cloud " +
 					"account's network. Set only when `cloud_account_id` is. No port: use the same " +
 					"port as `endpoint`.",
-				PlanModifiers: []planmodifier.String{useStateUnlessChanged("name", "cloud_account_id")},
+				PlanModifiers: []planmodifier.String{useStateUnlessChanged("name")},
 			},
 			"private_readonly_endpoint": schema.StringAttribute{
 				Computed: true,
 				MarkdownDescription: "Hostname that spreads reads across the replicas, inside your own " +
 					"cloud account's network. Pro databases in your own cloud account only.",
-				PlanModifiers: []planmodifier.String{useStateUnlessChanged("name", "cloud_account_id", "tier")},
+				PlanModifiers: []planmodifier.String{useStateUnlessChanged("name", "tier")},
 			},
 			"private_replica_endpoints": schema.ListAttribute{
 				ElementType: types.StringType,
@@ -255,7 +329,7 @@ is worth reading a plan that mentions it.`,
 				MarkdownDescription: "One hostname per replica, inside your own cloud account's network. " +
 					"Pro databases in your own cloud account only; empty otherwise.",
 				PlanModifiers: []planmodifier.List{
-					useStateUnlessChanged("name", "cloud_account_id", "tier", "replica_count"),
+					useStateUnlessChanged("name", "tier", "replica_count"),
 				},
 			},
 		},
@@ -306,9 +380,20 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 	create.LuaEnabled = boolPtr(plan.LuaEnabled)
 	create.TLSEnabled = boolPtr(plan.TLSEnabled)
 	create.TLSOnly = boolPtr(plan.TLSOnly)
+	// Unknown here means "the snapshot's account, whichever it is": the plan
+	// could not look it up, and omitting the field asks the API for exactly
+	// that.
 	if !plan.CloudAccountID.IsNull() && !plan.CloudAccountID.IsUnknown() {
 		v := strings.ToLower(plan.CloudAccountID.ValueString())
 		create.CloudAccountID = &v
+	}
+	if v := plan.RestoreFromSnapshotID.ValueString(); v != "" {
+		v = strings.ToLower(v)
+		create.RestoreFromSnapshotID = &v
+	}
+	if v := plan.RestoreFromKdbSnapshotID.ValueString(); v != "" {
+		v = strings.ToLower(v)
+		create.RestoreFromKdbSnapshotID = &v
 	}
 
 	// A key derived from the plan, not a fresh random one: Terraform retries a
@@ -571,7 +656,14 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		res.Diagnostics.AddError("The change was accepted but the database did not settle", explain(err))
 		return
 	}
+	// The account's name is what the plan promised when it promised one: a
+	// rename in the console between the plan's refresh and this read must not
+	// fail the apply as an inconsistent result. The next refresh shows it.
+	plannedName := plan.CloudAccountName
 	applyInstance(&plan, inst)
+	if !plannedName.IsUnknown() && !plannedName.IsNull() && !plan.CloudAccountName.IsNull() {
+		plan.CloudAccountName = plannedName
+	}
 	res.Diagnostics.Append(res.State.Set(ctx, &plan)...)
 }
 
@@ -788,6 +880,7 @@ func applyInstance(m *instanceModel, inst *Instance) {
 		!strings.EqualFold(m.CloudAccountID.ValueString(), *inst.CloudAccountID) {
 		m.CloudAccountID = stringOrNull(inst.CloudAccountID)
 	}
+	m.CloudAccountName = stringOrNull(inst.CloudAccountName)
 	m.PrivateEndpoint = stringOrNull(inst.PrivateEndpoint)
 	m.PrivateReadonlyEndpoint = stringOrNull(inst.PrivateReadonlyEndpoint)
 	m.PrivateReplicaEndpoints = stringList(inst.PrivateReplicaEndpoints)
@@ -799,7 +892,7 @@ func applyInstance(m *instanceModel, inst *Instance) {
 func nullUnknownComputed(m *instanceModel) {
 	for _, s := range []*types.String{
 		&m.Name, &m.KividbVersion, &m.Status, &m.Endpoint, &m.PublicEndpoint, &m.OrgID,
-		&m.PrivateEndpoint, &m.PrivateReadonlyEndpoint,
+		&m.PrivateEndpoint, &m.PrivateReadonlyEndpoint, &m.CloudAccountID, &m.CloudAccountName,
 	} {
 		if s.IsUnknown() {
 			*s = types.StringNull()
@@ -854,6 +947,11 @@ func explain(err error) string {
 			"they are one per person and are created from the console."
 	case "insufficient_credits":
 		return apiErr.Message + "\n\nAdd credits under Dashboard → Billing, then apply again."
+	case "snapshot_account_mismatch", "snapshot_cloud_mismatch", "snapshot_region_mismatch":
+		return apiErr.Message + "\n\n" + snapshotLockHint(apiErr)
+	case "invalid_restore_snapshot":
+		return apiErr.Message + "\n\nCheck the snapshot id, and that the snapshot has finished " +
+			"(a `kividb_disk_snapshot` waits for that unless `wait_for_ready = false`)."
 	default:
 		return apiErr.Error()
 	}
@@ -881,6 +979,13 @@ func idempotencyKeyFor(plan instanceModel) string {
 	// appended when set, so keys for databases in KiviDB's cloud are unchanged.
 	if v := plan.CloudAccountID.ValueString(); v != "" {
 		key += ":" + strings.ToLower(v)
+	}
+	// Likewise the same database made from a different snapshot.
+	if v := plan.RestoreFromSnapshotID.ValueString(); v != "" {
+		key += ":disk:" + strings.ToLower(v)
+	}
+	if v := plan.RestoreFromKdbSnapshotID.ValueString(); v != "" {
+		key += ":kdb:" + strings.ToLower(v)
 	}
 	return key
 }

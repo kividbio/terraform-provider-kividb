@@ -37,6 +37,7 @@ type instanceDataSourceModel struct {
 	OrgID          types.String `tfsdk:"org_id"`
 
 	CloudAccountID          types.String `tfsdk:"cloud_account_id"`
+	CloudAccountName        types.String `tfsdk:"cloud_account_name"`
 	PrivateEndpoint         types.String `tfsdk:"private_endpoint"`
 	PrivateReadonlyEndpoint types.String `tfsdk:"private_readonly_endpoint"`
 	PrivateReplicaEndpoints types.List   `tfsdk:"private_replica_endpoints"`
@@ -68,6 +69,10 @@ func (d *instanceDataSource) Schema(_ context.Context, _ datasource.SchemaReques
 			"cloud_account_id": schema.StringAttribute{
 				Computed:            true,
 				MarkdownDescription: "The connected cloud account the database runs in, or null if it runs in KiviDB's cloud.",
+			},
+			"cloud_account_name": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The name of that cloud account, as the KiviDB console shows it. Null for a database in KiviDB's cloud.",
 			},
 			"private_endpoint": schema.StringAttribute{
 				Computed:            true,
@@ -123,6 +128,7 @@ func (d *instanceDataSource) Read(ctx context.Context, req datasource.ReadReques
 	cfg.TLSEnabled = types.BoolValue(inst.TLSEnabled)
 	cfg.OrgID = stringOrNull(inst.OrgID)
 	cfg.CloudAccountID = stringOrNull(inst.CloudAccountID)
+	cfg.CloudAccountName = stringOrNull(inst.CloudAccountName)
 	cfg.PrivateEndpoint = stringOrNull(inst.PrivateEndpoint)
 	cfg.PrivateReadonlyEndpoint = stringOrNull(inst.PrivateReadonlyEndpoint)
 	cfg.PrivateReplicaEndpoints = stringList(inst.PrivateReplicaEndpoints)

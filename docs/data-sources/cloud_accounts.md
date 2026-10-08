@@ -33,9 +33,14 @@ output "verified_cloud_accounts" {
 Read-Only:
 
 - `aws_account_id` (String) The 12-digit AWS account id, for an AWS account.
-- `cloud` (String) The account's cloud: `aws` or `gcp`.
+- `azure_resource_group` (String) The resource group databases are created in, for an Azure subscription.
+- `azure_snapshot_account` (String) The storage account snapshots are kept in, for an Azure subscription.
+- `azure_snapshot_container` (String) The blob container snapshots are kept in, for an Azure subscription.
+- `azure_subscription_id` (String) The subscription ID, for an Azure subscription.
+- `azure_tenant_id` (String) The Microsoft Entra tenant ID, for an Azure subscription.
+- `cloud` (String) The account's cloud: `aws`, `azure` or `gcp`.
 - `gcp_project_id` (String) The project ID, for a Google Cloud project.
 - `id` (String) The account's id.
 - `name` (String) The name given in the console.
 - `regions` (List of String) Regions enabled for this account.
-- `status` (String) `verified`, `pending` or `failed`.
+- `status` (String) `verified`, `pending` or `broken`.

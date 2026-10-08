@@ -379,6 +379,143 @@ func TestCloudAccountReadsAGoogleCloudProject(t *testing.T) {
 	}
 }
 
+// What GET /cloud-accounts returns for an Azure connection: a resource group in
+// a subscription, in a tenant, and the storage it keeps snapshots in.
+const azureCloudAccountJSON = `{"cloud_accounts":[
+	{"id":"` + testAccountID + `","cloud":"azure","display_name":"emea","aws_account_id":null,"gcp_project_id":null,
+	 "azure_tenant_id":"72f988bf-86f1-41af-91ab-2d7cd011db47",
+	 "azure_subscription_id":"0b1f6471-1bf0-4dda-aec3-cb9272f09590",
+	 "azure_resource_group":"kividb","azure_snapshot_account":"acmekividbsnaps",
+	 "azure_snapshot_container":"kividb-snapshots","enabled_regions":["swedencentral","westeurope"],
+	 "status":"verified","network":{"regions":{}}}]}`
+
+func TestCloudAccountReadsAnAzureSubscription(t *testing.T) {
+	srv := cloudAccountsServer(t, http.StatusOK, azureCloudAccountJSON)
+	defer srv.Close()
+	ctx := context.Background()
+
+	d := &cloudAccountDataSource{client: NewClient(srv.URL, "k")}
+	sch := dataSourceSchema(t, d)
+	cfg := tfsdk.Config{Schema: sch, Raw: objectOf(t, sch.Type().TerraformType(ctx),
+		map[string]tftypes.Value{"name": tftypes.NewValue(tftypes.String, "emea")}, false)}
+	res := datasource.ReadResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}}
+	d.Read(ctx, datasource.ReadRequest{Config: cfg}, &res)
+	failOn(t, res.Diagnostics)
+
+	var got cloudAccountModel
+	failOn(t, res.State.Get(ctx, &got))
+	if got.Cloud.ValueString() != "azure" ||
+		got.AzureTenantID.ValueString() != "72f988bf-86f1-41af-91ab-2d7cd011db47" ||
+		got.AzureSubscriptionID.ValueString() != "0b1f6471-1bf0-4dda-aec3-cb9272f09590" ||
+		got.AzureResourceGroup.ValueString() != "kividb" ||
+		got.AzureSnapshotAccount.ValueString() != "acmekividbsnaps" ||
+		got.AzureSnapshotContainer.ValueString() != "kividb-snapshots" {
+		t.Errorf("an Azure subscription must read its cloud and Azure fields: %+v", got)
+	}
+	var regions []string
+	failOn(t, got.Regions.ElementsAs(ctx, &regions, false))
+	if strings.Join(regions, ",") != "swedencentral,westeurope" {
+		t.Errorf("regions = %v", regions)
+	}
+	if !got.AWSAccountID.IsNull() || !got.GCPProjectID.IsNull() {
+		t.Errorf("an Azure subscription has no AWS account or GCP project id: %+v", got)
+	}
+}
+
+// The Azure attributes are null, not empty strings, on the other clouds'
+// accounts, so `coalesce()` and null checks read them the same way.
+func TestNonAzureAccountsHaveNullAzureFields(t *testing.T) {
+	srv := cloudAccountsServer(t, http.StatusOK, cloudAccountsJSON)
+	defer srv.Close()
+	ctx := context.Background()
+
+	d := &cloudAccountsDataSource{client: NewClient(srv.URL, "k")}
+	sch := dataSourceSchema(t, d)
+	res := datasource.ReadResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}}
+	d.Read(ctx, datasource.ReadRequest{}, &res)
+	failOn(t, res.Diagnostics)
+
+	var got cloudAccountsModel
+	failOn(t, res.State.Get(ctx, &got))
+	for _, a := range got.CloudAccounts {
+		for _, v := range []types.String{a.AzureTenantID, a.AzureSubscriptionID, a.AzureResourceGroup,
+			a.AzureSnapshotAccount, a.AzureSnapshotContainer} {
+			if !v.IsNull() {
+				t.Errorf("%s: Azure fields must be null on an AWS account: %+v", a.Name, a)
+			}
+		}
+	}
+}
+
+// An Azure connection placed by id: the create sends cloud = "azure" with the
+// account, exactly as for the other clouds. Nothing in the provider refuses the
+// combination; the API decides whether the account can take the database.
+func TestCreateInAnAzureAccount(t *testing.T) {
+	var created map[string]any
+	azureInstance := strings.NewReplacer(`"cloud":"aws"`, `"cloud":"azure"`,
+		`"region":"eu-central-1"`, `"region":"swedencentral"`).Replace(byocInstanceJSON)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/instances":
+			_ = json.NewDecoder(r.Body).Decode(&created)
+			_, _ = w.Write([]byte(`{"instance_id":"i-1","job_id":"j-1","status":"creating"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/instances/i-1":
+			_, _ = w.Write([]byte(azureInstance))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(500)
+		}
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	r := &instanceResource{client: NewClient(srv.URL, "k")}
+	sch := instanceResourceSchema(t)
+	plan := tfsdk.Plan{Schema: sch, Raw: objectOf(t, sch.Type().TerraformType(ctx), map[string]tftypes.Value{
+		"name":             tftypes.NewValue(tftypes.String, "orders"),
+		"tier":             tftypes.NewValue(tftypes.String, "pro"),
+		"cloud":            tftypes.NewValue(tftypes.String, "azure"),
+		"region":           tftypes.NewValue(tftypes.String, "swedencentral"),
+		"data_size_gb":     tftypes.NewValue(tftypes.Number, 8),
+		"throughput_mode":  tftypes.NewValue(tftypes.String, "standard"),
+		"replica_count":    tftypes.NewValue(tftypes.Number, 2),
+		"aof_enabled":      tftypes.NewValue(tftypes.Bool, true),
+		"lua_enabled":      tftypes.NewValue(tftypes.Bool, false),
+		"tls_enabled":      tftypes.NewValue(tftypes.Bool, false),
+		"tls_only":         tftypes.NewValue(tftypes.Bool, false),
+		"wait_for_ready":   tftypes.NewValue(tftypes.Bool, true),
+		"cloud_account_id": tftypes.NewValue(tftypes.String, testAccountID),
+	}, true)}
+
+	res := resource.CreateResponse{State: tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(ctx), nil)}}
+	r.Create(ctx, resource.CreateRequest{Plan: plan}, &res)
+	failOn(t, res.Diagnostics)
+
+	if created["cloud"] != "azure" || created["region"] != "swedencentral" || created["cloud_account_id"] != testAccountID {
+		t.Errorf("create did not send the Azure placement: %v", created)
+	}
+	var got instanceModel
+	failOn(t, res.State.Get(ctx, &got))
+	if got.Cloud.ValueString() != "azure" || got.CloudAccountID.ValueString() != testAccountID ||
+		got.PrivateEndpoint.ValueString() != "orders.private.cloud.kividb.io" {
+		t.Errorf("Azure database not read back: %+v", got)
+	}
+}
+
+// The descriptions the registry renders must not still call Azure "coming soon".
+func TestByocDescriptionsNameAzureAsAvailable(t *testing.T) {
+	sch := instanceResourceSchema(t)
+	a := sch.Attributes["cloud_account_id"].(rschema.StringAttribute)
+	if !strings.Contains(a.MarkdownDescription, "Azure") || strings.Contains(a.MarkdownDescription, "coming soon") {
+		t.Errorf("cloud_account_id must name Azure as available: %q", a.MarkdownDescription)
+	}
+	d := dataSourceSchema(t, &cloudAccountDataSource{})
+	if strings.Contains(d.MarkdownDescription, "coming soon") || !strings.Contains(d.MarkdownDescription, "Azure") {
+		t.Errorf("kividb_cloud_account must name Azure as available: %q", d.MarkdownDescription)
+	}
+}
+
 func TestCloudAccountRequiresExactlyOneOfIDAndName(t *testing.T) {
 	ctx := context.Background()
 	d := &cloudAccountDataSource{}

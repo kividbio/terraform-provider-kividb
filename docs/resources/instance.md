@@ -59,6 +59,7 @@ resource "kividb_instance" "gcp_primary" {
 | `tier` | upgraded in place |
 | `kividb_version`, `lua_enabled`, `tls_enabled` | applied by a rolling restart |
 | `cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only` | **replaces the database** |
+| `restore_from_snapshot_id`, `restore_from_kdb_snapshot_id` | **replaces the database** when changed to a different snapshot |
 
 The last row is the one to read carefully. Nothing moves a database between
 clouds or regions, and append-only persistence is chosen when the volume is laid
@@ -98,8 +99,8 @@ output "private_endpoint" {
 }
 ```
 
-AWS accounts and Google Cloud projects are supported; Azure is coming soon.
-Set `cloud` to the account's cloud (`aws` or `gcp`). The account must be
+AWS accounts, Google Cloud projects and Azure subscriptions are supported.
+Set `cloud` to the account's cloud (`aws`, `gcp` or `azure`). The account must be
 `verified`, and `region` must be one of the regions enabled for it. A database that cannot be placed in the account is refused at apply with
 a message saying why.
 
@@ -120,9 +121,70 @@ database's name, so a rename changes them, and `private_replica_endpoints`
 grows and shrinks with `replica_count`. For a database in KiviDB's cloud they
 are null and `private_replica_endpoints` is empty.
 
-When importing a database that runs in your own account, set
-`cloud_account_id` in the configuration to the account it runs in, or the plan
-will propose replacing it.
+An existing database stays in the account it is in whether or not
+`cloud_account_id` is in its configuration: removing the attribute does not
+move it to KiviDB's cloud, and an imported database needs no
+`cloud_account_id` to keep it where it is. Setting it to a different account
+does replace the database.
+
+## Creating a database from a snapshot
+
+Set `restore_from_snapshot_id` to a disk snapshot, or
+`restore_from_kdb_snapshot_id` to a KDB snapshot, to create the database with
+that snapshot's data:
+
+```terraform
+resource "kividb_disk_snapshot" "nightly" {
+  instance_id = kividb_instance.orders.id
+  label       = "before-migration"
+}
+
+resource "kividb_instance" "orders_copy" {
+  name                     = "orders-copy"
+  tier                     = "pro"
+  cloud                    = "aws"          # the snapshot's cloud
+  region                   = "eu-central-1" # and its region
+  data_size_gb             = 8
+  replica_count            = 1
+  restore_from_snapshot_id = kividb_disk_snapshot.nightly.id
+}
+```
+
+A snapshot is restored only where it lives: in its own cloud, its own region
+and its own cloud account. Snapshots never leave the cloud or the account they
+were taken in, so the database you create from one must be there too.
+
+- Leave `cloud_account_id` unset and the database is placed in the snapshot's
+  account (or in KiviDB's cloud, for a snapshot taken there).
+  `cloud_account_id` and `cloud_account_name` then report where it went.
+- Set `cloud_account_id`, and it must be the snapshot's account.
+
+When the snapshot's id is known at plan time, the plan reads where the snapshot
+lives, shows the account the database will be placed in, and refuses a
+different cloud, region or account there and then:
+
+```
+Error: The snapshot is in a different region
+
+  Disk snapshot 5b2d7c1e-... is in eu-central-1 and this database is in
+  us-east-1. Set `region = "eu-central-1"`, or move the snapshot to us-east-1
+  first and then create the database from it.
+```
+
+When the id is not known until apply -- a snapshot created in the same apply,
+as above -- the API applies the same rule at apply, and the error says which
+cloud, region or account the snapshot is in.
+
+The snapshot is read only when the database is created. Changing
+`restore_from_snapshot_id` or `restore_from_kdb_snapshot_id` to a different
+snapshot **replaces the database**, and replacing it destroys its data.
+Removing the attribute afterwards changes nothing, and neither does adding it
+to a database that already exists (an imported one, say); the plan warns that
+nothing is restored. To create a database again from a snapshot, use
+`terraform apply -replace`.
+
+To move data between clouds or accounts, export it from the source database and
+import it into the target.
 
 ## Pro has a minimum size, and it differs by cloud
 
@@ -194,11 +256,13 @@ race its own teardown.
 ### Optional
 
 - `aof_enabled` (Boolean) Append-only persistence. **Changing this replaces the database**: it is chosen when the volume is laid out and there is no operation to change it after.
-- `cloud_account_id` (String) Run the database in your own cloud account: the id of an account connected in the KiviDB console (see the `kividb_cloud_account` data source). Omit it to run the database in KiviDB's cloud. Available on AWS and Google Cloud (set `cloud` to the account's cloud); Azure is coming soon. The account must be verified and have the database's region enabled. **Changing this replaces the database.**
+- `cloud_account_id` (String) Run the database in your own cloud account: the id of an account connected in the KiviDB console (see the `kividb_cloud_account` data source). Omit it to run the database in KiviDB's cloud. Available on AWS, Azure and Google Cloud (set `cloud` to the account's cloud). The account must be verified and have the database's region enabled. With `restore_from_snapshot_id` or `restore_from_kdb_snapshot_id`, omitting it places the database in the snapshot's account, and setting it to any other account is refused. **Changing this to a different account replaces the database.** Removing it from the configuration of a database that exists does not move the database: it stays in the account it is in.
 - `kividb_version` (String) Engine version, e.g. `1.0.4`. Applied by a rolling restart.
 - `lua_enabled` (Boolean) Lua scripting. Applied by a rolling restart.
 - `name` (String) Hostname-safe name, unique across KiviDB. Generated if omitted; changing it renames the database in place.
 - `replica_count` (Number) Read replicas. `0` at creation for a single node; scaling afterwards accepts 1-3. Going back to `0` is not a scaling operation and is refused -- see the error for what to do instead.
+- `restore_from_kdb_snapshot_id` (String) Create the database seeded from this KDB snapshot (a `.kdb` export). Same rule as `restore_from_snapshot_id`: the snapshot's cloud, region and cloud account only. Read only when the database is created. **Changing it to a different snapshot replaces the database**; removing it, or adding it to a database that already exists, changes nothing.
+- `restore_from_snapshot_id` (String) Create the database from this disk snapshot (see `kividb_disk_snapshot`). The database must be in the snapshot's cloud, region and cloud account, and at least as large as the snapshot needs; the API refuses anything else. Read only when the database is created. **Changing it to a different snapshot replaces the database**; removing it, or adding it to a database that already exists, changes nothing.
 - `throughput_mode` (String) `standard` or `high`. Changed in place.
 - `tls_enabled` (Boolean) Serve TLS alongside plaintext. Applied by a rolling restart.
 - `tls_only` (Boolean) Refuse plaintext connections. **Changing this replaces the database.**
@@ -206,6 +270,7 @@ race its own teardown.
 
 ### Read-Only
 
+- `cloud_account_name` (String) The name of the cloud account in `cloud_account_id`, as the KiviDB console shows it. Null for a database in KiviDB's cloud.
 - `endpoint` (String) Private endpoint.
 - `id` (String) The instance's id.
 - `org_id` (String) Owning organization.

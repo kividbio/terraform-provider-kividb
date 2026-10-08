@@ -10,9 +10,9 @@
 #      be "verified".
 #   3. export KIVIDB_API_KEY=kvdb_...  (an admin key)
 #
-# AWS accounts and Google Cloud projects are supported (for a Google Cloud
-# project, set cloud = "gcp" and a region of that project). Azure accounts are
-# coming soon.
+# AWS accounts, Google Cloud projects and Azure subscriptions are supported.
+# For a Google Cloud project set cloud = "gcp", and for an Azure subscription
+# cloud = "azure", with a region enabled for that account.
 
 terraform {
   required_providers {
@@ -26,7 +26,7 @@ terraform {
 provider "kividb" {}
 
 variable "cloud_account_name" {
-  description = "The name the AWS account or Google Cloud project was given when it was connected in the KiviDB console."
+  description = "The name the AWS account, Google Cloud project or Azure subscription was given when it was connected in the KiviDB console."
   type        = string
   default     = "production"
 }

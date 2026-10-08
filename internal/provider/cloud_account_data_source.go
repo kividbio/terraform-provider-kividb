@@ -38,6 +38,12 @@ type cloudAccountModel struct {
 	GCPProjectID types.String `tfsdk:"gcp_project_id"`
 	Regions      types.List   `tfsdk:"regions"`
 	Status       types.String `tfsdk:"status"`
+
+	AzureTenantID          types.String `tfsdk:"azure_tenant_id"`
+	AzureSubscriptionID    types.String `tfsdk:"azure_subscription_id"`
+	AzureResourceGroup     types.String `tfsdk:"azure_resource_group"`
+	AzureSnapshotAccount   types.String `tfsdk:"azure_snapshot_account"`
+	AzureSnapshotContainer types.String `tfsdk:"azure_snapshot_container"`
 }
 
 func (d *cloudAccountDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, res *datasource.MetadataResponse) {
@@ -49,7 +55,7 @@ func (d *cloudAccountDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 		MarkdownDescription: "A cloud account of your own, connected in the KiviDB console, that databases " +
 			"can run in. Look it up by `id` or by `name` (exactly one) and pass its `id` to " +
 			"`kividb_instance.cloud_account_id`. Accounts are connected in the console, not from Terraform. " +
-			"AWS accounts and Google Cloud projects are supported; Azure is coming soon.",
+			"AWS accounts, Google Cloud projects and Azure subscriptions are supported.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Optional:            true,
@@ -63,7 +69,7 @@ func (d *cloudAccountDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 			},
 			"cloud": schema.StringAttribute{
 				Computed:            true,
-				MarkdownDescription: "The account's cloud: `aws` or `gcp`.",
+				MarkdownDescription: "The account's cloud: `aws`, `azure` or `gcp`.",
 			},
 			"aws_account_id": schema.StringAttribute{
 				Computed:            true,
@@ -73,6 +79,26 @@ func (d *cloudAccountDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				Computed:            true,
 				MarkdownDescription: "The project ID, for a Google Cloud project.",
 			},
+			"azure_tenant_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The Microsoft Entra tenant ID, for an Azure subscription.",
+			},
+			"azure_subscription_id": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The subscription ID, for an Azure subscription.",
+			},
+			"azure_resource_group": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The resource group databases are created in, for an Azure subscription.",
+			},
+			"azure_snapshot_account": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The storage account snapshots are kept in, for an Azure subscription.",
+			},
+			"azure_snapshot_container": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The blob container in `azure_snapshot_account` snapshots are kept in, for an Azure subscription.",
+			},
 			"regions": schema.ListAttribute{
 				ElementType:         types.StringType,
 				Computed:            true,
@@ -81,7 +107,7 @@ func (d *cloudAccountDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 			"status": schema.StringAttribute{
 				Computed: true,
 				MarkdownDescription: "`verified` once KiviDB has confirmed it can act in the account; " +
-					"`pending` or `failed` otherwise. Only a verified account can take new databases.",
+					"`pending` or `broken` otherwise. Only a verified account can take new databases.",
 			},
 		},
 	}
@@ -145,6 +171,12 @@ func cloudAccountState(a CloudAccount) cloudAccountModel {
 		GCPProjectID: stringOrNull(a.GCPProjectID),
 		Regions:      stringList(a.EnabledRegions),
 		Status:       types.StringValue(a.Status),
+
+		AzureTenantID:          stringOrNull(a.AzureTenantID),
+		AzureSubscriptionID:    stringOrNull(a.AzureSubscriptionID),
+		AzureResourceGroup:     stringOrNull(a.AzureResourceGroup),
+		AzureSnapshotAccount:   stringOrNull(a.AzureSnapshotAccount),
+		AzureSnapshotContainer: stringOrNull(a.AzureSnapshotContainer),
 	}
 }
 
@@ -239,15 +271,35 @@ func (d *cloudAccountsDataSource) Schema(_ context.Context, _ datasource.SchemaR
 					Attributes: map[string]schema.Attribute{
 						"id":             schema.StringAttribute{Computed: true, MarkdownDescription: "The account's id."},
 						"name":           schema.StringAttribute{Computed: true, MarkdownDescription: "The name given in the console."},
-						"cloud":          schema.StringAttribute{Computed: true, MarkdownDescription: "The account's cloud: `aws` or `gcp`."},
+						"cloud":          schema.StringAttribute{Computed: true, MarkdownDescription: "The account's cloud: `aws`, `azure` or `gcp`."},
 						"aws_account_id": schema.StringAttribute{Computed: true, MarkdownDescription: "The 12-digit AWS account id, for an AWS account."},
 						"gcp_project_id": schema.StringAttribute{Computed: true, MarkdownDescription: "The project ID, for a Google Cloud project."},
+						"azure_tenant_id": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: "The Microsoft Entra tenant ID, for an Azure subscription.",
+						},
+						"azure_subscription_id": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: "The subscription ID, for an Azure subscription.",
+						},
+						"azure_resource_group": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: "The resource group databases are created in, for an Azure subscription.",
+						},
+						"azure_snapshot_account": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: "The storage account snapshots are kept in, for an Azure subscription.",
+						},
+						"azure_snapshot_container": schema.StringAttribute{
+							Computed:            true,
+							MarkdownDescription: "The blob container snapshots are kept in, for an Azure subscription.",
+						},
 						"regions": schema.ListAttribute{
 							ElementType:         types.StringType,
 							Computed:            true,
 							MarkdownDescription: "Regions enabled for this account.",
 						},
-						"status": schema.StringAttribute{Computed: true, MarkdownDescription: "`verified`, `pending` or `failed`."},
+						"status": schema.StringAttribute{Computed: true, MarkdownDescription: "`verified`, `pending` or `broken`."},
 					},
 				},
 			},

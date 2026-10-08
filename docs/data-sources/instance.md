@@ -35,6 +35,7 @@ output "existing_endpoint" {
 
 - `cloud` (String)
 - `cloud_account_id` (String) The connected cloud account the database runs in, or null if it runs in KiviDB's cloud.
+- `cloud_account_name` (String) The name of that cloud account, as the KiviDB console shows it. Null for a database in KiviDB's cloud.
 - `data_size_gb` (Number)
 - `endpoint` (String)
 - `kividb_version` (String)
