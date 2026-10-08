@@ -34,6 +34,9 @@ type diskSnapshotModel struct {
 	Cloud        types.String  `tfsdk:"cloud"`
 	InstanceName types.String  `tfsdk:"instance_name"`
 	CreatedAt    types.String  `tfsdk:"created_at"`
+
+	CloudAccountID   types.String `tfsdk:"cloud_account_id"`
+	CloudAccountName types.String `tfsdk:"cloud_account_name"`
 }
 
 func (r *diskSnapshotResource) Metadata(_ context.Context, req resource.MetadataRequest, res *resource.MetadataResponse) {
@@ -97,6 +100,19 @@ func (r *diskSnapshotResource) Schema(_ context.Context, _ resource.SchemaReques
 				Computed:            true,
 				MarkdownDescription: "When the snapshot was requested.",
 			},
+			// A snapshot is stored in the account of the database it was taken
+			// from, and never moves out of it.
+			"cloud_account_id": schema.StringAttribute{
+				Computed: true,
+				MarkdownDescription: "The cloud account the snapshot is stored in: the database's own. Null " +
+					"for a snapshot in KiviDB's cloud. A database made from this snapshot " +
+					"(`kividb_instance.restore_from_snapshot_id`) is placed in this account, and in the " +
+					"snapshot's `cloud` and `region`.",
+			},
+			"cloud_account_name": schema.StringAttribute{
+				Computed:            true,
+				MarkdownDescription: "The name of that cloud account, as the KiviDB console shows it. Null for a snapshot in KiviDB's cloud.",
+			},
 		},
 	}
 }
@@ -124,6 +140,8 @@ func (m *diskSnapshotModel) apply(s *DiskSnapshot) {
 	m.Cloud = types.StringValue(s.Cloud)
 	m.InstanceName = types.StringValue(s.InstanceName)
 	m.CreatedAt = types.StringValue(s.CreatedAt)
+	m.CloudAccountID = stringOrNull(s.CloudAccountID)
+	m.CloudAccountName = stringOrNull(s.CloudAccountName)
 	if s.SizeGB.Value != nil {
 		m.SizeGB = types.Float64Value(*s.SizeGB.Value)
 	} else {

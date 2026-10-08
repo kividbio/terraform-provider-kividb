@@ -46,9 +46,20 @@ soon as the server accepts it.
 
 ## Restoring
 
-Restoring is not a Terraform operation. It replaces the contents of a running
-database — something you do deliberately and watch, not something a plan
-performs because a file changed. Restore from the console or through an
-assistant.
+Restoring into an existing database is not a Terraform operation. It replaces
+the contents of a running database — something you do deliberately and watch,
+not something a plan performs because a file changed. Restore from the console
+or through an assistant.
+
+Creating a *new* database from a snapshot is: set
+[`kividb_instance`](instance.md)'s `restore_from_snapshot_id` to the snapshot's
+`id`.
+
+## Where a snapshot lives
+
+A snapshot is stored where its database runs — the same `cloud`, `region` and
+cloud account (`cloud_account_id`, null for KiviDB's cloud) — and is restored
+only there. A database created from it must be in that cloud, region and
+account; anything else is refused.
 
 {{ .SchemaMarkdown | trimspace }}
