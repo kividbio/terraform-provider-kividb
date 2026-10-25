@@ -122,6 +122,10 @@ func (p *kividbProvider) Resources(_ context.Context) []func() resource.Resource
 		NewKdbSnapshotResource,
 		NewAlertChannelResource,
 		NewAlertRuleResource,
+		NewSemanticCacheResource,
+		NewAgentMemoryStoreResource,
+		NewContextModelResource,
+		NewContextAgentKeyResource,
 	}
 }
 

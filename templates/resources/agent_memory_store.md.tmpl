@@ -1,0 +1,61 @@
+---
+page_title: "kividb_agent_memory_store Resource"
+subcategory: ""
+description: |-
+  An agent memory store on a database.
+---
+
+# kividb_agent_memory_store (Resource)
+
+An agent memory store on a database: what an AI agent should remember, within a
+conversation and across them. Working memory is a session's recent messages and
+a running summary; long-term memories are facts and events kept per actor and
+searched by meaning or by words.
+
+{{ tffile "examples/resources/kividb_agent_memory_store/resource.tf" }}
+
+## Destroying deletes the memories
+
+Sessions and memories live in the database itself. Destroying the resource
+deletes every session and every memory in the store, and so does anything that
+replaces it: a different `instance_id` or `name`. The database must be running
+for the delete to go through.
+
+Terraform manages the store's settings only. Your application adds messages,
+adds and searches memories, and recalls context through the API.
+
+Agent memory is not available on sharded databases; the API refuses to create a
+store on one.
+
+## What changes in place
+
+Everything except `instance_id` and `name` changes in place. `dimensions` can
+change only while the store holds no long-term memories; with memories in it the
+API refuses the change. `keep_recent` must stay below `summarize_after`, which is
+checked at plan time.
+
+## Models
+
+`embed_provider` turns memories and queries into vectors; with `none` your
+application sends its own vectors, and keyword search needs none. `llm_provider`
+summarizes long sessions and extracts long-term memories in the background,
+`extraction_delay_seconds` after a session's last new message; with `none`,
+nothing is summarized or extracted.
+
+Both API keys are stored encrypted and never returned, so each is kept in state
+as you gave it, and a key changed in the console is not detected. Leaving one
+out of a later apply keeps the stored key, as long as its provider stays the
+same. Model calls bill your account with that provider.
+
+`dedupe_threshold` is computed when left out: the API uses 0.92 when the store
+is created, and a later apply without it keeps whatever the store has.
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}

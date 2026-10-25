@@ -1,0 +1,58 @@
+---
+page_title: "kividb_semantic_cache Resource"
+subcategory: ""
+description: |-
+  A semantic cache namespace on a database.
+---
+
+# kividb_semantic_cache (Resource)
+
+A semantic cache namespace on a database: a place to store an LLM's answer to a
+prompt and find it again for a prompt that means the same thing.
+
+{{ tffile "examples/resources/kividb_semantic_cache/resource.tf" }}
+
+## Destroying deletes the cache
+
+The entries live in the database itself, under keys beginning
+`kividb:semcache:{<name>}:`. Destroying the resource deletes every entry cached
+in the namespace, and so does anything that replaces it: a different
+`instance_id` or `name`. The database must be running for the delete to go
+through; a stopped database refuses it, and the namespace stays in state.
+
+Terraform manages the namespace's settings only. Your application writes and
+looks up entries through the API (`POST .../semantic-cache/<name>/entries` and
+`.../lookup`), or through the KiviDB MCP server.
+
+## What changes in place
+
+Everything except `instance_id` and `name` changes in place, with one condition:
+`dimensions` can change only while the namespace is empty, because vectors of
+two sizes cannot be compared. With entries in it the API refuses the change and
+says how many there are. Empty the namespace first (Flush in the console, or
+`POST .../semantic-cache/<name>/flush`), or replace the resource with
+`terraform apply -replace=kividb_semantic_cache.<name>`, which deletes its
+entries.
+
+## Embedding providers
+
+With `embed_provider = "none"` KiviDB never calls a model: your application
+sends its own vector, `dimensions` long, with every write and lookup. With
+`openai` or `openai_compatible` KiviDB embeds the prompt using your key, which
+it stores encrypted and never returns. The key is therefore kept in state as
+you gave it, and a key changed in the console is not detected. Leaving
+`embed_api_key` out of a later apply keeps the stored key, as long as the
+provider stays the same. Embedding calls bill your account with that provider.
+
+`threshold` is computed when left out: the API uses 0.6 when the namespace is
+created, and a later apply without it keeps whatever the namespace has.
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}
