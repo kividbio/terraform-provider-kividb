@@ -126,7 +126,7 @@ func (r *instanceExportResource) set(ctx context.Context, plan *instanceExportMo
 	}
 	plan.ID = types.StringValue(inst.ID)
 	plan.Cadence = types.StringValue(inst.KdbExportCadence)
-	plan.ExportDestinationID = keepSpelling(plan.ExportDestinationID, inst.ExportDestinationID)
+	plan.ExportDestinationID = keepIDCase(plan.ExportDestinationID, inst.ExportDestinationID)
 	if inst.FreeTier && inst.KdbExportCadence != "off" {
 		res.AddWarning("Scheduled exports do not run on a free-tier database",
 			"The schedule is saved, but KiviDB does not export free-tier databases on a schedule. "+
@@ -142,9 +142,9 @@ type diagnosticsHolder interface {
 	AddWarning(summary, detail string)
 }
 
-// keepSpelling returns the configured id when the server's is the same id in
+// keepIDCase returns the configured id when the server's is the same id in
 // another case: Terraform requires a configured value back exactly as written.
-func keepSpelling(configured types.String, server *string) types.String {
+func keepIDCase(configured types.String, server *string) types.String {
 	if server == nil || *server == "" {
 		return types.StringNull()
 	}
@@ -195,7 +195,7 @@ func (r *instanceExportResource) Read(ctx context.Context, req resource.ReadRequ
 		state.InstanceID = types.StringValue(inst.ID)
 	}
 	state.Cadence = types.StringValue(inst.KdbExportCadence)
-	state.ExportDestinationID = keepSpelling(state.ExportDestinationID, inst.ExportDestinationID)
+	state.ExportDestinationID = keepIDCase(state.ExportDestinationID, inst.ExportDestinationID)
 	res.Diagnostics.Append(res.State.Set(ctx, &state)...)
 }
 

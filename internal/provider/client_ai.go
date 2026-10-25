@@ -1,11 +1,9 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"sort"
@@ -21,53 +19,6 @@ import (
 // Every settings write is a PUT that creates or replaces the whole object, so
 // the request types below carry every field the API reads, not a patch.
 
-// doAI is `do` with one difference: a request the API's schema rejects answers
-//
-//	{"error": {"code": "bad_request", "issues": {"formErrors": [...], "fieldErrors": {"field": [...]}}}}
-//
-// with no message, which `do` would surface as "bad_request (HTTP 400)". Here the
-// issues become the message, so the operator reads which field and why.
-func (c *Client) doAI(ctx context.Context, method, path string, body any, out any) error {
-	var reader io.Reader
-	if body != nil {
-		buf, err := json.Marshal(body)
-		if err != nil {
-			return fmt.Errorf("encoding request: %w", err)
-		}
-		reader = bytes.NewReader(buf)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
-	req.Header.Set("Accept", "application/json")
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	res, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("calling %s %s: %w", method, path, err)
-	}
-	defer res.Body.Close()
-	raw, err := io.ReadAll(res.Body)
-	if err != nil {
-		return fmt.Errorf("reading response: %w", err)
-	}
-	if res.StatusCode >= 400 {
-		apiErr := decodeAPIError(res.StatusCode, raw)
-		if apiErr.Message == "" {
-			apiErr.Message = issuesMessage(raw)
-		}
-		return apiErr
-	}
-	if out != nil && len(raw) > 0 {
-		if err := json.Unmarshal(raw, out); err != nil {
-			return fmt.Errorf("decoding response from %s %s: %w", method, path, err)
-		}
-	}
-	return nil
-}
 
 // issuesMessage renders zod's flattened issues as one line, field by field in
 // a stable order. Empty when the body carries none.
@@ -138,7 +89,7 @@ func (c *Client) PutSemanticCache(ctx context.Context, instanceID, name string, 
 	var out struct {
 		Namespace *SemanticCacheNamespace `json:"namespace"`
 	}
-	if err := c.doAI(ctx, http.MethodPut, semanticCachePath(instanceID, name), req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPut, semanticCachePath(instanceID, name), req, &out); err != nil {
 		return nil, err
 	}
 	if out.Namespace == nil {
@@ -153,7 +104,7 @@ func (c *Client) GetSemanticCache(ctx context.Context, instanceID, name string) 
 	var out struct {
 		Namespace *SemanticCacheNamespace `json:"namespace"`
 	}
-	if err := c.doAI(ctx, http.MethodGet, semanticCachePath(instanceID, name), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, semanticCachePath(instanceID, name), nil, &out); err != nil {
 		return nil, err
 	}
 	if out.Namespace == nil {
@@ -165,7 +116,7 @@ func (c *Client) GetSemanticCache(ctx context.Context, instanceID, name string) 
 // DeleteSemanticCache deletes the namespace and every entry cached in it. The
 // database must be running: the entries are removed from it.
 func (c *Client) DeleteSemanticCache(ctx context.Context, instanceID, name string) error {
-	return c.doAI(ctx, http.MethodDelete, semanticCachePath(instanceID, name), nil, nil)
+	return c.do(ctx, http.MethodDelete, semanticCachePath(instanceID, name), nil, nil)
 }
 
 // ── Agent memory ────────────────────────────────────────────────────────────
@@ -233,7 +184,7 @@ func (c *Client) PutAgentMemoryStore(ctx context.Context, instanceID, name strin
 	var out struct {
 		Store *AgentMemoryStore `json:"store"`
 	}
-	if err := c.doAI(ctx, http.MethodPut, agentMemoryPath(instanceID, name), req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPut, agentMemoryPath(instanceID, name), req, &out); err != nil {
 		return nil, err
 	}
 	if out.Store == nil {
@@ -246,7 +197,7 @@ func (c *Client) GetAgentMemoryStore(ctx context.Context, instanceID, name strin
 	var out struct {
 		Store *AgentMemoryStore `json:"store"`
 	}
-	if err := c.doAI(ctx, http.MethodGet, agentMemoryPath(instanceID, name), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, agentMemoryPath(instanceID, name), nil, &out); err != nil {
 		return nil, err
 	}
 	if out.Store == nil {
@@ -258,7 +209,7 @@ func (c *Client) GetAgentMemoryStore(ctx context.Context, instanceID, name strin
 // DeleteAgentMemoryStore deletes the store and every session and memory in it.
 // The database must be running.
 func (c *Client) DeleteAgentMemoryStore(ctx context.Context, instanceID, name string) error {
-	return c.doAI(ctx, http.MethodDelete, agentMemoryPath(instanceID, name), nil, nil)
+	return c.do(ctx, http.MethodDelete, agentMemoryPath(instanceID, name), nil, nil)
 }
 
 // ── Context retriever ───────────────────────────────────────────────────────
@@ -336,7 +287,7 @@ func contextModelPath(name string) string { return "/context-models/" + pathEsca
 // in the database, which must be running.
 func (c *Client) PutContextModel(ctx context.Context, name string, req ContextModelRequest) (*ContextModelDetail, error) {
 	var out ContextModelDetail
-	if err := c.doAI(ctx, http.MethodPut, contextModelPath(name), req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPut, contextModelPath(name), req, &out); err != nil {
 		return nil, err
 	}
 	if out.Model.Name == "" {
@@ -347,7 +298,7 @@ func (c *Client) PutContextModel(ctx context.Context, name string, req ContextMo
 
 func (c *Client) GetContextModel(ctx context.Context, name string) (*ContextModelDetail, error) {
 	var out ContextModelDetail
-	if err := c.doAI(ctx, http.MethodGet, contextModelPath(name), nil, &out); err != nil {
+	if err := c.do(ctx, http.MethodGet, contextModelPath(name), nil, &out); err != nil {
 		return nil, err
 	}
 	if out.Model.Name == "" {
@@ -359,7 +310,7 @@ func (c *Client) GetContextModel(ctx context.Context, name string) (*ContextMode
 // DeleteContextModel deletes the model, its search indexes and its agent keys.
 // The records the indexes covered stay in the database.
 func (c *Client) DeleteContextModel(ctx context.Context, name string) error {
-	return c.doAI(ctx, http.MethodDelete, contextModelPath(name), nil, nil)
+	return c.do(ctx, http.MethodDelete, contextModelPath(name), nil, nil)
 }
 
 // ContextAgentKeyRequest is the POST body (contextAgentKeyBodySchema). Filter
@@ -379,7 +330,7 @@ func (c *Client) CreateContextAgentKey(ctx context.Context, model string, req Co
 		Key      string           `json:"key"`
 		AgentKey *ContextAgentKey `json:"agent_key"`
 	}
-	if err := c.doAI(ctx, http.MethodPost, contextModelPath(model)+"/keys", req, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, contextModelPath(model)+"/keys", req, &out); err != nil {
 		return "", nil, err
 	}
 	if out.AgentKey == nil || out.AgentKey.ID == "" || out.Key == "" {
@@ -391,7 +342,7 @@ func (c *Client) CreateContextAgentKey(ctx context.Context, model string, req Co
 // RevokeContextAgentKey revokes a key. A key already revoked answers 404
 // key_not_found, as does one that never existed.
 func (c *Client) RevokeContextAgentKey(ctx context.Context, model, keyID string) error {
-	return c.doAI(ctx, http.MethodDelete, contextModelPath(model)+"/keys/"+pathEscape(keyID), nil, nil)
+	return c.do(ctx, http.MethodDelete, contextModelPath(model)+"/keys/"+pathEscape(keyID), nil, nil)
 }
 
 // ContextMCPURL is where an agent holding an agent key speaks the Model Context

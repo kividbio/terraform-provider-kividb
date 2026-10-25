@@ -20,9 +20,9 @@ import (
 )
 
 const (
-	testDestID     = "3e7a1c2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d"
-	testInstanceID = "7d6c5b4a-3f2e-4d1c-9b0a-8f7e6d5c4b3a"
-	testKdbID      = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+	testDestID   = "3e7a1c2b-4d5f-4a6b-8c9d-0e1f2a3b4c5d"
+	bkInstanceID = "7d6c5b4a-3f2e-4d1c-9b0a-8f7e6d5c4b3a"
+	testKdbID    = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
 )
 
 // fakeBackups is the backup half of the KiviDB API, in memory: the routes in
@@ -49,13 +49,13 @@ type fakeBackups struct {
 	kdbReads      map[string]int
 
 	// refuse answers a "METHOD /path" with this status and body instead.
-	refuse map[string]refusal
+	refuse map[string]bkRefusal
 
 	calls  []string
 	bodies map[string]map[string]any
 }
 
-type refusal struct {
+type bkRefusal struct {
 	status int
 	body   string
 }
@@ -68,7 +68,7 @@ func newFakeBackups(t *testing.T) (*fakeBackups, *Client) {
 		instances: map[string]map[string]any{},
 		kdb:       map[string]map[string]any{},
 		kdbReads:  map[string]int{},
-		refuse:    map[string]refusal{},
+		refuse:    map[string]bkRefusal{},
 		bodies:    map[string]map[string]any{},
 	}
 	srv := httptest.NewServer(f)
@@ -286,8 +286,8 @@ func (f *fakeBackups) body(key string) map[string]any {
 }
 
 func (f *fakeBackups) addInstance(freeTier bool) {
-	f.instances[testInstanceID] = map[string]any{
-		"id": testInstanceID, "name": "orders", "tier": "essentials", "cloud": "aws", "region": "eu-central-1",
+	f.instances[bkInstanceID] = map[string]any{
+		"id": bkInstanceID, "name": "orders", "tier": "essentials", "cloud": "aws", "region": "eu-central-1",
 		"status": "running", "free_tier": freeTier, "shard_count": 1,
 		"export_destination_id": nil, "kdb_export_cadence": "off",
 	}
@@ -362,7 +362,7 @@ func (h *harness) importAndRead(id string) (tfsdk.State, diag.Diagnostics) {
 	return h.read(res.State)
 }
 
-func (h *harness) str(state tfsdk.State, name string) string {
+func (h *harness) bkStr(state tfsdk.State, name string) string {
 	h.t.Helper()
 	v := plannedStringOf(h.t, state.Raw, h.typ, name)
 	return v
@@ -396,9 +396,9 @@ func configure(t *testing.T, r resource.Resource, c *Client) resource.Resource {
 	return r
 }
 
-func str(v string) tftypes.Value { return tftypes.NewValue(tftypes.String, v) }
-func null() tftypes.Value        { return tftypes.NewValue(tftypes.String, nil) }
-func boolean(v bool) tftypes.Value {
+func bkStr(v string) tftypes.Value { return tftypes.NewValue(tftypes.String, v) }
+func null() tftypes.Value          { return tftypes.NewValue(tftypes.String, nil) }
+func bkBoolean(v bool) tftypes.Value {
 	return tftypes.NewValue(tftypes.Bool, v)
 }
 
@@ -414,10 +414,10 @@ func errorText(d diag.Diagnostics) string {
 
 func destinationPlan() map[string]tftypes.Value {
 	return map[string]tftypes.Value{
-		"name":           str("backups"),
-		"aws_account_id": str("123456789012"),
-		"bucket":         str("acme-kividb-exports"),
-		"prefix":         str("kividb/"),
+		"name":           bkStr("backups"),
+		"aws_account_id": bkStr("123456789012"),
+		"bucket":         bkStr("acme-kividb-exports"),
+		"prefix":         bkStr("kividb/"),
 		"role_name":      tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	}
 }
@@ -448,11 +448,11 @@ func TestExportDestinationCreateReadsTheSetupBack(t *testing.T) {
 		"cloud":       "aws",
 		"last_error":  "<null>",
 	} {
-		if got := h.str(state, name); got != want {
+		if got := h.bkStr(state, name); got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
 	}
-	trust := h.str(state, "trust_policy")
+	trust := h.bkStr(state, "trust_policy")
 	if strings.ContainsAny(trust, "\n ") || !strings.Contains(trust, `"sts:ExternalId":"kvx-0123456789abcdef"`) {
 		t.Errorf("trust_policy must be the API's document, compact: %s", trust)
 	}
@@ -466,13 +466,13 @@ func TestExportDestinationSendsAChosenRoleName(t *testing.T) {
 	f, c := newFakeBackups(t)
 	h := newHarness(t, configure(t, NewExportDestinationResource(), c))
 	vals := destinationPlan()
-	vals["role_name"] = str("KiviDBManagement-Exports-prod")
+	vals["role_name"] = bkStr("KiviDBManagement-Exports-prod")
 	state, d := h.create(vals)
 	failOn(t, d)
 	if f.body("POST /export-destinations")["role_name"] != "KiviDBManagement-Exports-prod" {
 		t.Errorf("role_name not sent")
 	}
-	if got := h.str(state, "role_arn"); got != "arn:aws:iam::123456789012:role/KiviDBManagement-Exports-prod" {
+	if got := h.bkStr(state, "role_arn"); got != "arn:aws:iam::123456789012:role/KiviDBManagement-Exports-prod" {
 		t.Errorf("role_arn = %q", got)
 	}
 }
@@ -487,8 +487,8 @@ func TestExportDestinationReadRefreshesAndForgetsWhenGone(t *testing.T) {
 	f.dests[testDestID]["last_error"] = "write: The role may not write under acme-kividb-exports/kividb/"
 	state, d = h.read(state)
 	failOn(t, d)
-	if h.str(state, "status") != "failed" || !strings.HasPrefix(h.str(state, "last_error"), "write:") {
-		t.Errorf("read did not refresh the verification state: %s / %s", h.str(state, "status"), h.str(state, "last_error"))
+	if h.bkStr(state, "status") != "failed" || !strings.HasPrefix(h.bkStr(state, "last_error"), "write:") {
+		t.Errorf("read did not refresh the verification state: %s / %s", h.bkStr(state, "status"), h.bkStr(state, "last_error"))
 	}
 
 	delete(f.dests, testDestID)
@@ -507,14 +507,14 @@ func TestExportDestinationUpdateDeleteAndImport(t *testing.T) {
 
 	state, d = h.update(state, destinationPlan())
 	failOn(t, d)
-	if h.str(state, "id") != testDestID {
+	if h.bkStr(state, "id") != testDestID {
 		t.Errorf("update lost the id")
 	}
 
 	imported, d := h.importAndRead(testDestID)
 	failOn(t, d)
-	if h.str(imported, "bucket") != "acme-kividb-exports" || h.str(imported, "external_id") != "kvx-0123456789abcdef" {
-		t.Errorf("import did not read the destination: bucket=%s", h.str(imported, "bucket"))
+	if h.bkStr(imported, "bucket") != "acme-kividb-exports" || h.bkStr(imported, "external_id") != "kvx-0123456789abcdef" {
+		t.Errorf("import did not read the destination: bucket=%s", h.bkStr(imported, "bucket"))
 	}
 
 	failOn(t, h.destroy(state))
@@ -528,11 +528,11 @@ func TestExportDestinationUpdateDeleteAndImport(t *testing.T) {
 func TestExportDestinationRefusalIsVerbatim(t *testing.T) {
 	f, c := newFakeBackups(t)
 	h := newHarness(t, configure(t, NewExportDestinationResource(), c))
-	f.refuse["POST /export-destinations"] = refusal{409,
+	f.refuse["POST /export-destinations"] = bkRefusal{409,
 		`{"error":{"code":"already_exists","message":"This organization already has a destination for that bucket and prefix."}}`}
 	state, d := h.create(destinationPlan())
 	if !d.HasError() || !strings.Contains(errorText(d), "This organization already has a destination for that bucket and prefix.") {
-		t.Errorf("the API's refusal must be shown as written: %s", errorText(d))
+		t.Errorf("the API's bkRefusal must be shown as written: %s", errorText(d))
 	}
 	if !state.Raw.IsNull() {
 		t.Errorf("a refused create must record nothing")
@@ -577,13 +577,13 @@ func TestVerificationRetriesWhileTheRolePropagates(t *testing.T) {
 	f.verifyFailFirst = 2
 	h := newHarness(t, configure(t, NewExportDestinationVerificationResource(), c))
 
-	state, d := h.create(map[string]tftypes.Value{"destination_id": str(testDestID), "triggers": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil)})
+	state, d := h.create(map[string]tftypes.Value{"destination_id": bkStr(testDestID), "triggers": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil)})
 	failOn(t, d)
 	if f.verifyCalls != 3 {
 		t.Errorf("verification should be retried until it passes: %d calls", f.verifyCalls)
 	}
-	if h.str(state, "status") != "verified" || h.str(state, "bucket_region") != "eu-central-1" || h.str(state, "id") != testDestID {
-		t.Errorf("verified state not recorded: %s %s", h.str(state, "status"), h.str(state, "bucket_region"))
+	if h.bkStr(state, "status") != "verified" || h.bkStr(state, "bucket_region") != "eu-central-1" || h.bkStr(state, "id") != testDestID {
+		t.Errorf("verified state not recorded: %s %s", h.bkStr(state, "status"), h.bkStr(state, "bucket_region"))
 	}
 }
 
@@ -594,7 +594,7 @@ func TestVerificationFailureFailsTheApplyAndLeavesNoOrphan(t *testing.T) {
 	f.verifyFailFirst = -1
 	h := newHarness(t, configure(t, NewExportDestinationVerificationResource(), c))
 
-	state, d := h.create(map[string]tftypes.Value{"destination_id": str(testDestID), "triggers": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil)})
+	state, d := h.create(map[string]tftypes.Value{"destination_id": bkStr(testDestID), "triggers": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil)})
 	text := errorText(d)
 	if !d.HasError() || !strings.Contains(text, "KiviDB could not assume arn:aws:iam::123456789012:role/KiviDBManagement-Exports-3e7a1c2b. Check the role exists.") ||
 		!strings.Contains(text, "assume_role") {
@@ -616,15 +616,15 @@ func TestVerificationFailureFailsTheApplyAndLeavesNoOrphan(t *testing.T) {
 func TestVerificationDoesNotRetryOtherRefusals(t *testing.T) {
 	f, c := newFakeBackups(t)
 	f.addVerifiedDestination()
-	f.refuse["POST /export-destinations/"+testDestID+"/verify"] = refusal{403,
+	f.refuse["POST /export-destinations/"+testDestID+"/verify"] = bkRefusal{403,
 		`{"error":{"code":"forbidden","message":"This API key cannot change databases."}}`}
 	h := newHarness(t, configure(t, NewExportDestinationVerificationResource(), c))
-	_, d := h.create(map[string]tftypes.Value{"destination_id": str(testDestID), "triggers": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil)})
+	_, d := h.create(map[string]tftypes.Value{"destination_id": bkStr(testDestID), "triggers": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil)})
 	if !strings.Contains(errorText(d), "This API key cannot change databases.") {
-		t.Errorf("refusal not surfaced: %s", errorText(d))
+		t.Errorf("bkRefusal not surfaced: %s", errorText(d))
 	}
 	if n := f.called("POST /export-destinations/" + testDestID + "/verify"); n != 1 {
-		t.Errorf("a refusal that waiting cannot fix must not be retried: %d calls", n)
+		t.Errorf("a bkRefusal that waiting cannot fix must not be retried: %d calls", n)
 	}
 }
 
@@ -635,10 +635,10 @@ func TestVerificationReadForgetsAnUnverifiedOrMissingDestination(t *testing.T) {
 
 	state, d := h.importAndRead(testDestID)
 	failOn(t, d)
-	if h.str(state, "destination_id") != testDestID || h.str(state, "status") != "verified" {
-		t.Errorf("import of a verified destination: %s %s", h.str(state, "destination_id"), h.str(state, "status"))
+	if h.bkStr(state, "destination_id") != testDestID || h.bkStr(state, "status") != "verified" {
+		t.Errorf("import of a verified destination: %s %s", h.bkStr(state, "destination_id"), h.bkStr(state, "status"))
 	}
-	state, d = h.update(state, map[string]tftypes.Value{"destination_id": str(testDestID), "triggers": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil)})
+	state, d = h.update(state, map[string]tftypes.Value{"destination_id": bkStr(testDestID), "triggers": tftypes.NewValue(tftypes.Map{ElementType: tftypes.String}, nil)})
 	failOn(t, d)
 
 	f.dests[testDestID]["status"] = "failed"
@@ -670,18 +670,18 @@ func TestInstanceExportSetsUpdatesAndTurnsOff(t *testing.T) {
 	h := newHarness(t, configure(t, NewInstanceExportResource(), c))
 
 	state, d := h.create(map[string]tftypes.Value{
-		"instance_id": str(testInstanceID), "export_destination_id": str(strings.ToUpper(testDestID)), "cadence": str("daily"),
+		"instance_id": bkStr(bkInstanceID), "export_destination_id": bkStr(strings.ToUpper(testDestID)), "cadence": bkStr("daily"),
 	})
 	failOn(t, d)
-	if got := f.body("PATCH /instances/" + testInstanceID + "/export-config"); got["kdb_export_cadence"] != "daily" ||
+	if got := f.body("PATCH /instances/" + bkInstanceID + "/export-config"); got["kdb_export_cadence"] != "daily" ||
 		got["export_destination_id"] != testDestID {
 		t.Errorf("create sent %v", got)
 	}
-	if h.str(state, "export_destination_id") != strings.ToUpper(testDestID) {
-		t.Errorf("the configured spelling must be kept: %s", h.str(state, "export_destination_id"))
+	if h.bkStr(state, "export_destination_id") != strings.ToUpper(testDestID) {
+		t.Errorf("the configured spelling must be kept: %s", h.bkStr(state, "export_destination_id"))
 	}
-	if h.str(state, "id") != testInstanceID {
-		t.Errorf("id = %s", h.str(state, "id"))
+	if h.bkStr(state, "id") != bkInstanceID {
+		t.Errorf("id = %s", h.bkStr(state, "id"))
 	}
 	if len(d.Warnings()) != 0 {
 		t.Errorf("no warning for a paid database: %v", d.Warnings())
@@ -689,30 +689,30 @@ func TestInstanceExportSetsUpdatesAndTurnsOff(t *testing.T) {
 
 	// Dropping the destination from configuration must send an explicit null:
 	// an omitted field is kept by the API.
-	f.instances[testInstanceID]["kdb_export_cadence"] = "off"
+	f.instances[bkInstanceID]["kdb_export_cadence"] = "off"
 	state, d = h.update(state, map[string]tftypes.Value{
-		"instance_id": str(testInstanceID), "export_destination_id": null(), "cadence": str("off"),
+		"instance_id": bkStr(bkInstanceID), "export_destination_id": null(), "cadence": bkStr("off"),
 	})
 	failOn(t, d)
-	sent := f.body("PATCH /instances/" + testInstanceID + "/export-config")
+	sent := f.body("PATCH /instances/" + bkInstanceID + "/export-config")
 	if v, ok := sent["export_destination_id"]; !ok || v != nil {
 		t.Errorf("an unset destination must be sent as null: %v", sent)
 	}
-	if f.instances[testInstanceID]["export_destination_id"] != nil {
+	if f.instances[bkInstanceID]["export_destination_id"] != nil {
 		t.Errorf("destination not cleared")
 	}
 
-	f.instances[testInstanceID]["export_destination_id"] = testDestID
-	f.instances[testInstanceID]["kdb_export_cadence"] = "weekly"
+	f.instances[bkInstanceID]["export_destination_id"] = testDestID
+	f.instances[bkInstanceID]["kdb_export_cadence"] = "weekly"
 	state, d = h.read(state)
 	failOn(t, d)
-	if h.str(state, "cadence") != "weekly" || h.str(state, "export_destination_id") != testDestID {
-		t.Errorf("read must show a change made outside Terraform: %s %s", h.str(state, "cadence"), h.str(state, "export_destination_id"))
+	if h.bkStr(state, "cadence") != "weekly" || h.bkStr(state, "export_destination_id") != testDestID {
+		t.Errorf("read must show a change made outside Terraform: %s %s", h.bkStr(state, "cadence"), h.bkStr(state, "export_destination_id"))
 	}
 
 	failOn(t, h.destroy(state))
-	if f.instances[testInstanceID]["export_destination_id"] != nil || f.instances[testInstanceID]["kdb_export_cadence"] != "off" {
-		t.Errorf("destroy must turn exports off: %v", f.instances[testInstanceID])
+	if f.instances[bkInstanceID]["export_destination_id"] != nil || f.instances[bkInstanceID]["kdb_export_cadence"] != "off" {
+		t.Errorf("destroy must turn exports off: %v", f.instances[bkInstanceID])
 	}
 }
 
@@ -720,17 +720,17 @@ func TestInstanceExportImportAndGone(t *testing.T) {
 	f, c := newFakeBackups(t)
 	f.addInstance(false)
 	f.addVerifiedDestination()
-	f.instances[testInstanceID]["export_destination_id"] = testDestID
-	f.instances[testInstanceID]["kdb_export_cadence"] = "daily"
+	f.instances[bkInstanceID]["export_destination_id"] = testDestID
+	f.instances[bkInstanceID]["kdb_export_cadence"] = "daily"
 	h := newHarness(t, configure(t, NewInstanceExportResource(), c))
 
-	state, d := h.importAndRead(testInstanceID)
+	state, d := h.importAndRead(bkInstanceID)
 	failOn(t, d)
-	if h.str(state, "instance_id") != testInstanceID || h.str(state, "cadence") != "daily" || h.str(state, "export_destination_id") != testDestID {
-		t.Errorf("import: %s %s %s", h.str(state, "instance_id"), h.str(state, "cadence"), h.str(state, "export_destination_id"))
+	if h.bkStr(state, "instance_id") != bkInstanceID || h.bkStr(state, "cadence") != "daily" || h.bkStr(state, "export_destination_id") != testDestID {
+		t.Errorf("import: %s %s %s", h.bkStr(state, "instance_id"), h.bkStr(state, "cadence"), h.bkStr(state, "export_destination_id"))
 	}
 
-	delete(f.instances, testInstanceID)
+	delete(f.instances, bkInstanceID)
 	gone, d := h.read(state)
 	failOn(t, d)
 	if !gone.Raw.IsNull() {
@@ -747,10 +747,10 @@ func TestInstanceExportRefusalIsVerbatim(t *testing.T) {
 	f.dests[testDestID]["status"] = "pending"
 	h := newHarness(t, configure(t, NewInstanceExportResource(), c))
 	state, d := h.create(map[string]tftypes.Value{
-		"instance_id": str(testInstanceID), "export_destination_id": str(testDestID), "cadence": str("off"),
+		"instance_id": bkStr(bkInstanceID), "export_destination_id": bkStr(testDestID), "cadence": bkStr("off"),
 	})
 	if !strings.Contains(errorText(d), "Choose a verified destination of this organization.") {
-		t.Errorf("refusal not shown as written: %s", errorText(d))
+		t.Errorf("bkRefusal not shown as written: %s", errorText(d))
 	}
 	if !state.Raw.IsNull() {
 		t.Errorf("a refused create must record nothing")
@@ -763,7 +763,7 @@ func TestInstanceExportWarnsThatFreeTierHasNoSchedule(t *testing.T) {
 	f.addVerifiedDestination()
 	h := newHarness(t, configure(t, NewInstanceExportResource(), c))
 	_, d := h.create(map[string]tftypes.Value{
-		"instance_id": str(testInstanceID), "export_destination_id": str(testDestID), "cadence": str("daily"),
+		"instance_id": bkStr(bkInstanceID), "export_destination_id": bkStr(testDestID), "cadence": bkStr("daily"),
 	})
 	failOn(t, d)
 	if len(d.Warnings()) != 1 || !strings.Contains(d.Warnings()[0].Summary(), "free-tier") {
@@ -777,13 +777,13 @@ func TestInstanceExportScheduleNeedsADestinationAtPlan(t *testing.T) {
 		dest, cadence tftypes.Value
 		wantErr       bool
 	}{
-		{null(), str("daily"), true},
-		{null(), str("off"), false},
-		{str(testDestID), str("weekly"), false},
-		{tftypes.NewValue(tftypes.String, tftypes.UnknownValue), str("daily"), false},
+		{null(), bkStr("daily"), true},
+		{null(), bkStr("off"), false},
+		{bkStr(testDestID), bkStr("weekly"), false},
+		{tftypes.NewValue(tftypes.String, tftypes.UnknownValue), bkStr("daily"), false},
 	} {
 		cfg := tfsdk.Config{Schema: h.sch, Raw: objectOf(t, h.typ, map[string]tftypes.Value{
-			"instance_id": str(testInstanceID), "export_destination_id": tc.dest, "cadence": tc.cadence,
+			"instance_id": bkStr(bkInstanceID), "export_destination_id": tc.dest, "cadence": tc.cadence,
 		}, false)}
 		res := resource.ValidateConfigResponse{}
 		h.r.(resource.ResourceWithValidateConfig).ValidateConfig(context.Background(), resource.ValidateConfigRequest{Config: cfg}, &res)
@@ -797,9 +797,9 @@ func TestInstanceExportScheduleNeedsADestinationAtPlan(t *testing.T) {
 
 func kdbPlan(waitForReady tftypes.Value) map[string]tftypes.Value {
 	return map[string]tftypes.Value{
-		"instance_id":    str(testInstanceID),
-		"label":          str("before-migration"),
-		"deliver":        boolean(true),
+		"instance_id":    bkStr(bkInstanceID),
+		"label":          bkStr("before-migration"),
+		"deliver":        bkBoolean(true),
 		"wait_for_ready": waitForReady,
 	}
 }
@@ -812,12 +812,12 @@ func TestKdbSnapshotCreateWaitsUntilWritten(t *testing.T) {
 
 	state, d := h.create(kdbPlan(tftypes.NewValue(tftypes.Bool, nil)))
 	failOn(t, d)
-	sent := f.body("POST /instances/" + testInstanceID + "/kdb-snapshots/export")
+	sent := f.body("POST /instances/" + bkInstanceID + "/kdb-snapshots/export")
 	if sent["label"] != "before-migration" || sent["deliver"] != true {
 		t.Errorf("export sent %v", sent)
 	}
-	if h.str(state, "status") != "ready" || h.str(state, "id") != testKdbID {
-		t.Errorf("create must wait for the file: status=%s", h.str(state, "status"))
+	if h.bkStr(state, "status") != "ready" || h.bkStr(state, "id") != testKdbID {
+		t.Errorf("create must wait for the file: status=%s", h.bkStr(state, "status"))
 	}
 	var m kdbSnapshotModel
 	failOn(t, state.Get(context.Background(), &m))
@@ -834,10 +834,10 @@ func TestKdbSnapshotWithoutWaiting(t *testing.T) {
 	f.addInstance(false)
 	f.kdbReadyAfter = -1
 	h := newHarness(t, configure(t, NewKdbSnapshotResource(), c))
-	state, d := h.create(kdbPlan(boolean(false)))
+	state, d := h.create(kdbPlan(bkBoolean(false)))
 	failOn(t, d)
-	if h.str(state, "status") != "creating" {
-		t.Errorf("wait_for_ready = false returns at once: %s", h.str(state, "status"))
+	if h.bkStr(state, "status") != "creating" {
+		t.Errorf("wait_for_ready = false returns at once: %s", h.bkStr(state, "status"))
 	}
 }
 
@@ -869,7 +869,7 @@ func TestKdbSnapshotStillWritingAtTheDeadlineIsKeptInState(t *testing.T) {
 	if !d.HasError() || !strings.Contains(errorText(d), "its id is in state") {
 		t.Errorf("a timeout must say the export is kept: %s", errorText(d))
 	}
-	if state.Raw.IsNull() || h.str(state, "id") != testKdbID {
+	if state.Raw.IsNull() || h.bkStr(state, "id") != testKdbID {
 		t.Errorf("an export still being written exists and must be in state (tainted)")
 	}
 }
@@ -886,20 +886,20 @@ func TestKdbSnapshotReadImportUpdateAndDelete(t *testing.T) {
 	f.kdb[testKdbID]["delivered_uri"] = "s3://acme-kividb-exports/kividb/orders/kdb-export.kdb"
 	state, d = h.read(state)
 	failOn(t, d)
-	if h.str(state, "delivery_status") != "delivered" || !strings.HasPrefix(h.str(state, "delivered_uri"), "s3://") {
-		t.Errorf("delivery not read: %s", h.str(state, "delivery_status"))
+	if h.bkStr(state, "delivery_status") != "delivered" || !strings.HasPrefix(h.bkStr(state, "delivered_uri"), "s3://") {
+		t.Errorf("delivery not read: %s", h.bkStr(state, "delivery_status"))
 	}
 
-	state, d = h.update(state, kdbPlan(boolean(false)))
+	state, d = h.update(state, kdbPlan(bkBoolean(false)))
 	failOn(t, d)
-	if h.str(state, "id") != testKdbID {
+	if h.bkStr(state, "id") != testKdbID {
 		t.Errorf("update lost the id")
 	}
 
 	imported, d := h.importAndRead(testKdbID)
 	failOn(t, d)
-	if h.str(imported, "instance_id") != testInstanceID || h.str(imported, "label") != "before-migration" {
-		t.Errorf("import: %s %s", h.str(imported, "instance_id"), h.str(imported, "label"))
+	if h.bkStr(imported, "instance_id") != bkInstanceID || h.bkStr(imported, "label") != "before-migration" {
+		t.Errorf("import: %s %s", h.bkStr(imported, "instance_id"), h.bkStr(imported, "label"))
 	}
 
 	// The database is deleted: the export stays, with no instance_id. It is
@@ -907,7 +907,7 @@ func TestKdbSnapshotReadImportUpdateAndDelete(t *testing.T) {
 	f.kdb[testKdbID]["instance_id"] = nil
 	state, d = h.read(state)
 	failOn(t, d)
-	if state.Raw.IsNull() || h.str(state, "instance_id") != testInstanceID {
+	if state.Raw.IsNull() || h.bkStr(state, "instance_id") != bkInstanceID {
 		t.Errorf("an export outlives its database and keeps instance_id")
 	}
 
@@ -928,7 +928,7 @@ func TestKdbSnapshotDeleteWaitsOutAnExportInProgress(t *testing.T) {
 	f.addInstance(false)
 	f.kdbReadyAfter = -1
 	h := newHarness(t, configure(t, NewKdbSnapshotResource(), c))
-	state, _ := h.create(kdbPlan(boolean(false)))
+	state, _ := h.create(kdbPlan(bkBoolean(false)))
 
 	f.kdbReadyAfter = f.kdbReads[testKdbID] + 2
 	failOn(t, h.destroy(state))
@@ -949,15 +949,15 @@ func TestKdbSnapshotRefusalsAreExplainedOrVerbatim(t *testing.T) {
 	f, c := newFakeBackups(t)
 	f.addInstance(false)
 	h := newHarness(t, configure(t, NewKdbSnapshotResource(), c))
-	key := "POST /instances/" + testInstanceID + "/kdb-snapshots/export"
+	key := "POST /instances/" + bkInstanceID + "/kdb-snapshots/export"
 
-	f.refuse[key] = refusal{409, `{"error":{"code":"instance_not_running"}}`}
+	f.refuse[key] = bkRefusal{409, `{"error":{"code":"instance_not_running"}}`}
 	_, d := h.create(kdbPlan(tftypes.NewValue(tftypes.Bool, nil)))
 	if !strings.Contains(errorText(d), "The database is not running") {
 		t.Errorf("a bare code must be explained: %s", errorText(d))
 	}
 
-	f.refuse[key] = refusal{422, `{"error":{"code":"sharded_export_unsupported_on_cloud","message":"Exporting a sharded database is available on AWS only for now."}}`}
+	f.refuse[key] = bkRefusal{422, `{"error":{"code":"sharded_export_unsupported_on_cloud","message":"Exporting a sharded database is available on AWS only for now."}}`}
 	_, d = h.create(kdbPlan(tftypes.NewValue(tftypes.Bool, nil)))
 	if !strings.Contains(errorText(d), "Exporting a sharded database is available on AWS only for now.") {
 		t.Errorf("a message must be shown as written: %s", errorText(d))
@@ -979,7 +979,7 @@ func TestKdbSnapshotLabelValidation(t *testing.T) {
 
 // --- data sources ------------------------------------------------------------
 
-func readDataSource(t *testing.T, ds datasource.DataSource, c *Client, vals map[string]tftypes.Value) (tfsdk.State, diag.Diagnostics) {
+func bkReadDataSource(t *testing.T, ds datasource.DataSource, c *Client, vals map[string]tftypes.Value) (tfsdk.State, diag.Diagnostics) {
 	t.Helper()
 	cres := datasource.ConfigureResponse{}
 	ds.(datasource.DataSourceWithConfigure).Configure(context.Background(), datasource.ConfigureRequest{ProviderData: c}, &cres)
@@ -995,13 +995,13 @@ func TestKdbSnapshotsListsAndFilters(t *testing.T) {
 	f, c := newFakeBackups(t)
 	f.addInstance(false)
 	f.kdbReadyAfter = -1
-	f.kdb[testKdbID] = map[string]any{"id": testKdbID, "instance_id": testInstanceID, "label": "a", "status": "ready",
+	f.kdb[testKdbID] = map[string]any{"id": testKdbID, "instance_id": bkInstanceID, "label": "a", "status": "ready",
 		"size_bytes": "2048", "triggered_by": "schedule", "created_at": "2026-10-25T10:00:00.000Z", "ttd": "2026-11-01T10:00:00.000Z",
 		"delivery_status": "delivered", "delivered_uri": "s3://b/kividb/a.kdb"}
 	f.kdb["other"] = map[string]any{"id": "other", "instance_id": nil, "label": "b", "status": "failed",
 		"triggered_by": "manual", "created_at": "2026-10-24T10:00:00.000Z"}
 
-	state, d := readDataSource(t, NewKdbSnapshotsDataSource(), c, map[string]tftypes.Value{"status": str("ready")})
+	state, d := bkReadDataSource(t, NewKdbSnapshotsDataSource(), c, map[string]tftypes.Value{"status": bkStr("ready")})
 	failOn(t, d)
 	var m kdbSnapshotsModel
 	failOn(t, state.Get(context.Background(), &m))
@@ -1013,16 +1013,16 @@ func TestKdbSnapshotsListsAndFilters(t *testing.T) {
 		t.Errorf("fields not read: %+v", s)
 	}
 
-	_, d = readDataSource(t, NewKdbSnapshotsDataSource(), c, map[string]tftypes.Value{"instance_id": str(testInstanceID)})
+	_, d = bkReadDataSource(t, NewKdbSnapshotsDataSource(), c, map[string]tftypes.Value{"instance_id": bkStr(bkInstanceID)})
 	failOn(t, d)
-	if f.called("GET /instances/"+testInstanceID+"/kdb-snapshots") != 1 {
+	if f.called("GET /instances/"+bkInstanceID+"/kdb-snapshots") != 1 {
 		t.Errorf("instance_id must use the database's list")
 	}
 
-	f.refuse["GET /kdb-snapshots"] = refusal{403, `{"error":{"code":"forbidden","message":"This key may not read snapshots."}}`}
-	_, d = readDataSource(t, NewKdbSnapshotsDataSource(), c, nil)
+	f.refuse["GET /kdb-snapshots"] = bkRefusal{403, `{"error":{"code":"forbidden","message":"This key may not read snapshots."}}`}
+	_, d = bkReadDataSource(t, NewKdbSnapshotsDataSource(), c, nil)
 	if !strings.Contains(errorText(d), "This key may not read snapshots.") {
-		t.Errorf("refusal not surfaced: %s", errorText(d))
+		t.Errorf("bkRefusal not surfaced: %s", errorText(d))
 	}
 }
 
@@ -1049,7 +1049,7 @@ func TestDiskSnapshotsReadsBothListings(t *testing.T) {
 	defer srv.Close()
 	c := NewClient(srv.URL, "k")
 
-	state, d := readDataSource(t, NewDiskSnapshotsDataSource(), c, map[string]tftypes.Value{"status": str("ready")})
+	state, d := bkReadDataSource(t, NewDiskSnapshotsDataSource(), c, map[string]tftypes.Value{"status": bkStr("ready")})
 	failOn(t, d)
 	var m diskSnapshotsModel
 	failOn(t, state.Get(context.Background(), &m))
@@ -1062,7 +1062,7 @@ func TestDiskSnapshotsReadsBothListings(t *testing.T) {
 		t.Errorf("org listing not read: %+v", s)
 	}
 
-	state, d = readDataSource(t, NewDiskSnapshotsDataSource(), c, map[string]tftypes.Value{"instance_id": str("i-1")})
+	state, d = bkReadDataSource(t, NewDiskSnapshotsDataSource(), c, map[string]tftypes.Value{"instance_id": bkStr("i-1")})
 	failOn(t, d)
 	failOn(t, state.Get(context.Background(), &m))
 	if len(m.Snapshots) != 1 || m.Snapshots[0].Label.ValueString() != "manual-1" || m.Snapshots[0].SizeGB.ValueFloat64() != 4 {

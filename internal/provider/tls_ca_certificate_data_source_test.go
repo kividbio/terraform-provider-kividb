@@ -10,7 +10,7 @@ import (
 func TestTLSCACertificateReadsThePEM(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("GET /instances/i-1/tls/ca-cert", 200, testCA)
-	res := readDataSource(t, &tlsCACertificateDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": str("i-1")})
+	res := dsReadDataSource(t, &tlsCACertificateDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": dsStr("i-1")})
 	failOn(t, res.Diagnostics)
 	var got tlsCACertificateModel
 	failOn(t, res.State.Get(context.Background(), &got))
@@ -33,7 +33,7 @@ func TestTLSCACertificateErrors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFakeAPI(t)
 			f.answer("GET /instances/i-1/tls/ca-cert", tc.status, tc.body)
-			res := readDataSource(t, &tlsCACertificateDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": str("i-1")})
+			res := dsReadDataSource(t, &tlsCACertificateDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": dsStr("i-1")})
 			wantError(t, res.Diagnostics, tc.want)
 		})
 	}

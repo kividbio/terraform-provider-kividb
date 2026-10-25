@@ -26,8 +26,8 @@ func TestMaintenanceWindowCreate(t *testing.T) {
 		return apiReply{200, maintenanceJSON(1, 22, "Europe/Berlin")}
 	})
 
-	res := doCreate(t, &maintenanceWindowResource{client: f.client()}, map[string]tftypes.Value{
-		"instance_id": str("i-1"), "day": str("Monday"), "hour": num(22), "timezone": str("Europe/Berlin"),
+	res := dsDoCreate(t, &maintenanceWindowResource{client: f.client()}, map[string]tftypes.Value{
+		"instance_id": dsStr("i-1"), "day": dsStr("Monday"), "hour": num(22), "timezone": dsStr("Europe/Berlin"),
 	})
 	failOn(t, res.Diagnostics)
 
@@ -50,7 +50,7 @@ func TestMaintenanceWindowCreate(t *testing.T) {
 
 func maintenanceStateVals() map[string]tftypes.Value {
 	return map[string]tftypes.Value{
-		"id": str("i-1"), "instance_id": str("i-1"), "day": str("monday"), "hour": num(22), "timezone": str("Europe/Berlin"),
+		"id": dsStr("i-1"), "instance_id": dsStr("i-1"), "day": dsStr("monday"), "hour": num(22), "timezone": dsStr("Europe/Berlin"),
 	}
 }
 
@@ -58,7 +58,7 @@ func TestMaintenanceWindowRead(t *testing.T) {
 	f := newFakeAPI(t)
 	// Changed in the console to Saturday 04:00 UTC.
 	f.answer("GET "+maintenancePath, 200, maintenanceJSON(6, 4, "UTC"))
-	res := doRead(t, &maintenanceWindowResource{client: f.client()}, maintenanceStateVals())
+	res := dsDoRead(t, &maintenanceWindowResource{client: f.client()}, maintenanceStateVals())
 	failOn(t, res.Diagnostics)
 	var got maintenanceWindowModel
 	failOn(t, res.State.Get(context.Background(), &got))
@@ -68,7 +68,7 @@ func TestMaintenanceWindowRead(t *testing.T) {
 
 	g := newFakeAPI(t)
 	g.answer("GET "+maintenancePath, 404, `{"error":{"code":"not_found"}}`)
-	res = doRead(t, &maintenanceWindowResource{client: g.client()}, maintenanceStateVals())
+	res = dsDoRead(t, &maintenanceWindowResource{client: g.client()}, maintenanceStateVals())
 	failOn(t, res.Diagnostics)
 	if !res.State.Raw.IsNull() {
 		t.Error("the window of a database that is gone must be removed from state")
@@ -79,9 +79,9 @@ func TestMaintenanceWindowUpdate(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("PATCH "+maintenanceWindowPath, 200, maintenanceJSON(3, 1, "Asia/Kolkata"))
 	plan := maintenanceStateVals()
-	plan["day"], plan["hour"], plan["timezone"] = str("wednesday"), num(1), str("Asia/Kolkata")
+	plan["day"], plan["hour"], plan["timezone"] = dsStr("wednesday"), num(1), dsStr("Asia/Kolkata")
 	delete(plan, "id")
-	res := doUpdate(t, &maintenanceWindowResource{client: f.client()}, maintenanceStateVals(), plan)
+	res := dsDoUpdate(t, &maintenanceWindowResource{client: f.client()}, maintenanceStateVals(), plan)
 	failOn(t, res.Diagnostics)
 	if sent := f.sent("PATCH " + maintenanceWindowPath); sent[0].Body["day"] != float64(3) || sent[0].Body["timezone"] != "Asia/Kolkata" {
 		t.Errorf("PATCH body = %+v", sent)
@@ -92,7 +92,7 @@ func TestMaintenanceWindowUpdate(t *testing.T) {
 func TestMaintenanceWindowDeleteRestoresTheDefault(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("PATCH "+maintenanceWindowPath, 200, maintenanceJSON(0, 3, "UTC"))
-	failOn(t, doDelete(t, &maintenanceWindowResource{client: f.client()}, maintenanceStateVals()).Diagnostics)
+	failOn(t, dsDoDelete(t, &maintenanceWindowResource{client: f.client()}, maintenanceStateVals()).Diagnostics)
 	sent := f.sent("PATCH " + maintenanceWindowPath)
 	if len(sent) != 1 || sent[0].Body["day"] != float64(0) || sent[0].Body["hour"] != float64(3) || sent[0].Body["timezone"] != "UTC" {
 		t.Errorf("delete must restore Sunday 03:00 UTC, sent %+v", sent)
@@ -100,11 +100,11 @@ func TestMaintenanceWindowDeleteRestoresTheDefault(t *testing.T) {
 
 	g := newFakeAPI(t)
 	g.answer("PATCH "+maintenanceWindowPath, 404, `{"error":{"code":"not_found"}}`)
-	failOn(t, doDelete(t, &maintenanceWindowResource{client: g.client()}, maintenanceStateVals()).Diagnostics)
+	failOn(t, dsDoDelete(t, &maintenanceWindowResource{client: g.client()}, maintenanceStateVals()).Diagnostics)
 }
 
 func TestMaintenanceWindowImport(t *testing.T) {
-	res := doImport(t, &maintenanceWindowResource{}, "i-1")
+	res := dsDoImport(t, &maintenanceWindowResource{}, "i-1")
 	failOn(t, res.Diagnostics)
 	var got maintenanceWindowModel
 	failOn(t, res.State.Get(context.Background(), &got))
@@ -119,8 +119,8 @@ func TestMaintenanceWindowRefusalNamesTheField(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("PATCH "+maintenanceWindowPath, 400, `{"error":{"code":"bad_request","issues":{"formErrors":[],
 		"fieldErrors":{"timezone":["Not a known time zone (use an IANA name such as Europe/Berlin)."]}}}}`)
-	res := doCreate(t, &maintenanceWindowResource{client: f.client()}, map[string]tftypes.Value{
-		"instance_id": str("i-1"), "day": str("monday"), "hour": num(3), "timezone": str("Mars/Olympus"),
+	res := dsDoCreate(t, &maintenanceWindowResource{client: f.client()}, map[string]tftypes.Value{
+		"instance_id": dsStr("i-1"), "day": dsStr("monday"), "hour": num(3), "timezone": dsStr("Mars/Olympus"),
 	})
 	wantError(t, res.Diagnostics, "timezone: Not a known time zone (use an IANA name such as Europe/Berlin).")
 }

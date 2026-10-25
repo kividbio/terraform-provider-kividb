@@ -27,8 +27,8 @@ func scheduledInstanceJSON(enabled bool, cadence string, retention int, mode str
 
 func scheduleVals() map[string]tftypes.Value {
 	return map[string]tftypes.Value{
-		"instance_id": str("i-1"), "enabled": boolean(true), "cadence": str("hourly"),
-		"retention_mode": str("keep_days"), "retention": num(14),
+		"instance_id": dsStr("i-1"), "enabled": dsBoolean(true), "cadence": dsStr("hourly"),
+		"retention_mode": dsStr("keep_days"), "retention": num(14),
 	}
 }
 
@@ -37,7 +37,7 @@ func TestSnapshotScheduleCreate(t *testing.T) {
 	f.answer("PATCH "+snapshotConfigPath, 200, `{"updated":true}`)
 	f.answer("GET "+instancePath, 200, scheduledInstanceJSON(true, "hourly", 14, "keep_days"))
 
-	res := doCreate(t, &snapshotScheduleResource{client: f.client()}, scheduleVals())
+	res := dsDoCreate(t, &snapshotScheduleResource{client: f.client()}, scheduleVals())
 	failOn(t, res.Diagnostics)
 	if n := res.Diagnostics.WarningsCount(); n != 0 {
 		t.Errorf("a paid database's schedule runs, so no warning: %v", res.Diagnostics.Warnings())
@@ -67,7 +67,7 @@ func TestSnapshotScheduleWarnsOnTheFreeTier(t *testing.T) {
 	f.answer("PATCH "+snapshotConfigPath, 200, `{"updated":true}`)
 	f.answer("GET "+instancePath, 200, strings.Replace(scheduledInstanceJSON(true, "hourly", 14, "keep_days"),
 		`"free_tier":false`, `"free_tier":true`, 1))
-	res := doCreate(t, &snapshotScheduleResource{client: f.client()}, scheduleVals())
+	res := dsDoCreate(t, &snapshotScheduleResource{client: f.client()}, scheduleVals())
 	failOn(t, res.Diagnostics)
 	if res.Diagnostics.WarningsCount() != 1 || !strings.Contains(res.Diagnostics.Warnings()[0].Summary(), "Free-tier") {
 		t.Errorf("expected the free-tier warning, got %v", res.Diagnostics.Warnings())
@@ -78,8 +78,8 @@ func TestSnapshotScheduleRead(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("GET "+instancePath, 200, scheduledInstanceJSON(false, "weekly", 3, "keep_last"))
 	vals := scheduleVals()
-	vals["id"] = str("i-1")
-	res := doRead(t, &snapshotScheduleResource{client: f.client()}, vals)
+	vals["id"] = dsStr("i-1")
+	res := dsDoRead(t, &snapshotScheduleResource{client: f.client()}, vals)
 	failOn(t, res.Diagnostics)
 	var got snapshotScheduleModel
 	failOn(t, res.State.Get(context.Background(), &got))
@@ -90,7 +90,7 @@ func TestSnapshotScheduleRead(t *testing.T) {
 
 	g := newFakeAPI(t)
 	g.answer("GET "+instancePath, 404, `{"error":{"code":"not_found"}}`)
-	res = doRead(t, &snapshotScheduleResource{client: g.client()}, vals)
+	res = dsDoRead(t, &snapshotScheduleResource{client: g.client()}, vals)
 	failOn(t, res.Diagnostics)
 	if !res.State.Raw.IsNull() {
 		t.Error("the schedule of a database that is gone must be removed from state")
@@ -101,7 +101,7 @@ func TestSnapshotScheduleRead(t *testing.T) {
 func TestSnapshotScheduleReadsDefaultsWhenTheFieldsAreMissing(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("GET "+instancePath, 200, `{"instance":{"id":"i-1","status":"running"}}`)
-	res := doRead(t, &snapshotScheduleResource{client: f.client()}, map[string]tftypes.Value{"id": str("i-1"), "instance_id": str("i-1")})
+	res := dsDoRead(t, &snapshotScheduleResource{client: f.client()}, map[string]tftypes.Value{"id": dsStr("i-1"), "instance_id": dsStr("i-1")})
 	failOn(t, res.Diagnostics)
 	var got snapshotScheduleModel
 	failOn(t, res.State.Get(context.Background(), &got))
@@ -115,10 +115,10 @@ func TestSnapshotScheduleUpdate(t *testing.T) {
 	f.answer("PATCH "+snapshotConfigPath, 200, `{"updated":true}`)
 	f.answer("GET "+instancePath, 200, scheduledInstanceJSON(true, "daily", 7, "keep_last"))
 	prior := scheduleVals()
-	prior["id"] = str("i-1")
+	prior["id"] = dsStr("i-1")
 	plan := scheduleVals()
-	plan["cadence"], plan["retention"], plan["retention_mode"] = str("daily"), num(7), str("keep_last")
-	res := doUpdate(t, &snapshotScheduleResource{client: f.client()}, prior, plan)
+	plan["cadence"], plan["retention"], plan["retention_mode"] = dsStr("daily"), num(7), dsStr("keep_last")
+	res := dsDoUpdate(t, &snapshotScheduleResource{client: f.client()}, prior, plan)
 	failOn(t, res.Diagnostics)
 	if sent := f.sent("PATCH " + snapshotConfigPath); sent[0].Body["disk_snapshot_retention_days"] != float64(7) {
 		t.Errorf("PATCH body = %+v", sent)
@@ -131,8 +131,8 @@ func TestSnapshotScheduleDeleteOnlyTurnsItOff(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("PATCH "+snapshotConfigPath, 200, `{"updated":true}`)
 	vals := scheduleVals()
-	vals["id"] = str("i-1")
-	failOn(t, doDelete(t, &snapshotScheduleResource{client: f.client()}, vals).Diagnostics)
+	vals["id"] = dsStr("i-1")
+	failOn(t, dsDoDelete(t, &snapshotScheduleResource{client: f.client()}, vals).Diagnostics)
 	sent := f.sent("PATCH " + snapshotConfigPath)
 	if len(sent) != 1 || len(sent[0].Body) != 1 || sent[0].Body["disk_snapshot_enabled"] != false {
 		t.Errorf("delete must send only disk_snapshot_enabled=false, sent %+v", sent)
@@ -140,11 +140,11 @@ func TestSnapshotScheduleDeleteOnlyTurnsItOff(t *testing.T) {
 
 	g := newFakeAPI(t)
 	g.answer("PATCH "+snapshotConfigPath, 404, `{"error":{"code":"not_found"}}`)
-	failOn(t, doDelete(t, &snapshotScheduleResource{client: g.client()}, vals).Diagnostics)
+	failOn(t, dsDoDelete(t, &snapshotScheduleResource{client: g.client()}, vals).Diagnostics)
 }
 
 func TestSnapshotScheduleImport(t *testing.T) {
-	res := doImport(t, &snapshotScheduleResource{}, "i-1")
+	res := dsDoImport(t, &snapshotScheduleResource{}, "i-1")
 	failOn(t, res.Diagnostics)
 	var got snapshotScheduleModel
 	failOn(t, res.State.Get(context.Background(), &got))
@@ -156,6 +156,6 @@ func TestSnapshotScheduleImport(t *testing.T) {
 func TestSnapshotScheduleRefusalIsSurfaced(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("PATCH "+snapshotConfigPath, 403, `{"error":{"code":"forbidden","message":"This API key has the viewer role, which cannot change databases."}}`)
-	res := doCreate(t, &snapshotScheduleResource{client: f.client()}, scheduleVals())
+	res := dsDoCreate(t, &snapshotScheduleResource{client: f.client()}, scheduleVals())
 	wantError(t, res.Diagnostics, "This API key has the viewer role, which cannot change databases.", "admin role")
 }

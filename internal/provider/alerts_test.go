@@ -23,9 +23,9 @@ import (
 )
 
 const (
-	testInstanceID = "790df3ae-c064-45f5-b924-9ed89471fd72"
-	testSlackURL   = "https://hooks.slack.com/services/T000/B000/XXXXXXXXXXXXXXXX"
-	testPDKey      = "abcdefghijklmnopqrstuvwxyz012345"
+	// testInstanceID is shared with the AI tests (ai_fake_test.go).
+	testSlackURL = "https://hooks.slack.com/services/T000/B000/XXXXXXXXXXXXXXXX"
+	testPDKey    = "abcdefghijklmnopqrstuvwxyz012345"
 )
 
 // --- a fake of routes/alerts.ts and routes/audit-log.ts ----------------------
@@ -241,7 +241,7 @@ func (f *fakeAlertsAPI) normalize(b map[string]any) (map[string]any, int, string
 
 // --- helpers ---------------------------------------------------------------
 
-func resourceSchema(t *testing.T, r resource.Resource) rschema.Schema {
+func alResourceSchema(t *testing.T, r resource.Resource) rschema.Schema {
 	t.Helper()
 	var res resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &res)
@@ -251,7 +251,7 @@ func resourceSchema(t *testing.T, r resource.Resource) rschema.Schema {
 
 // planOf is what Terraform hands Create: the given values, and every other
 // attribute null if it is configurable or unknown if only the server sets it.
-func planOf(t *testing.T, sch rschema.Schema, vals map[string]tftypes.Value) tftypes.Value {
+func alPlanOf(t *testing.T, sch rschema.Schema, vals map[string]tftypes.Value) tftypes.Value {
 	t.Helper()
 	typ := sch.Type().TerraformType(context.Background()).(tftypes.Object)
 	all := map[string]tftypes.Value{}
@@ -287,14 +287,14 @@ func tfStrSet(vs ...string) tftypes.Value {
 	return tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, elems)
 }
 
-func emptyState(sch rschema.Schema) tfsdk.State {
+func alEmptyState(sch rschema.Schema) tfsdk.State {
 	return tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(context.Background()), nil)}
 }
 
 func create(t *testing.T, r resource.Resource, sch rschema.Schema, vals map[string]tftypes.Value) resource.CreateResponse {
 	t.Helper()
-	res := resource.CreateResponse{State: emptyState(sch)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: tfsdk.Plan{Schema: sch, Raw: planOf(t, sch, vals)}}, &res)
+	res := resource.CreateResponse{State: alEmptyState(sch)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: tfsdk.Plan{Schema: sch, Raw: alPlanOf(t, sch, vals)}}, &res)
 	return res
 }
 
@@ -322,7 +322,7 @@ func importAndRead(t *testing.T, r resource.ResourceWithImportState, sch rschema
 
 func validateResource(t *testing.T, r resource.ResourceWithValidateConfig, sch rschema.Schema, vals map[string]tftypes.Value) []string {
 	t.Helper()
-	cfg := tfsdk.Config{Schema: sch, Raw: planOf(t, sch, vals)}
+	cfg := tfsdk.Config{Schema: sch, Raw: alPlanOf(t, sch, vals)}
 	// A config holds null, not unknown, for attributes nobody wrote.
 	typ := sch.Type().TerraformType(context.Background()).(tftypes.Object)
 	all := map[string]tftypes.Value{}
@@ -348,7 +348,7 @@ func validateResource(t *testing.T, r resource.ResourceWithValidateConfig, sch r
 func TestAlertChannelWebhookCreateKeepsTheSecretShownOnce(t *testing.T) {
 	f, c := newFakeAlertsAPI(t)
 	r := &alertChannelResource{client: c}
-	sch := resourceSchema(t, r)
+	sch := alResourceSchema(t, r)
 
 	res := create(t, r, sch, map[string]tftypes.Value{
 		"name": tfStr("ops hook"), "kind": tfStr("webhook"), "url": tfStr("https://example.com/hooks/kividb/alerts"),
@@ -394,7 +394,7 @@ func TestAlertChannelWebhookCreateKeepsTheSecretShownOnce(t *testing.T) {
 func TestAlertChannelEmailAndPagerDutyDefaults(t *testing.T) {
 	f, c := newFakeAlertsAPI(t)
 	r := &alertChannelResource{client: c}
-	sch := resourceSchema(t, r)
+	sch := alResourceSchema(t, r)
 	ctx := context.Background()
 
 	res := create(t, r, sch, map[string]tftypes.Value{
@@ -434,9 +434,9 @@ func TestAlertChannelEmailAndPagerDutyDefaults(t *testing.T) {
 
 func TestAlertChannelDefaultModifiers(t *testing.T) {
 	ctx := context.Background()
-	sch := resourceSchema(t, &alertChannelResource{})
+	sch := alResourceSchema(t, &alertChannelResource{})
 	cfgFor := func(kind string) tfsdk.Config {
-		return tfsdk.Config{Schema: sch, Raw: planOf(t, sch, map[string]tftypes.Value{
+		return tfsdk.Config{Schema: sch, Raw: alPlanOf(t, sch, map[string]tftypes.Value{
 			"kind": tfStr(kind), "name": tfStr("x"),
 			"roles": tfNull(tftypes.Set{ElementType: tftypes.String}), "region": tfNull(tftypes.String),
 		})}
@@ -447,7 +447,7 @@ func TestAlertChannelDefaultModifiers(t *testing.T) {
 
 	for kind, want := range map[string]string{"email": "admin,owner", "slack": ""} {
 		req := planmodifier.SetRequest{Config: cfgFor(kind), Plan: plan(kind), ConfigValue: types.SetNull(types.StringType),
-			PlanValue: types.SetUnknown(types.StringType), State: emptyState(sch)}
+			PlanValue: types.SetUnknown(types.StringType), State: alEmptyState(sch)}
 		res := planmodifier.SetResponse{PlanValue: req.PlanValue}
 		defaultEmailRolesModifier{}.PlanModifySet(ctx, req, &res)
 		var got []string
@@ -461,7 +461,7 @@ func TestAlertChannelDefaultModifiers(t *testing.T) {
 	}
 	for kind, want := range map[string]string{"pagerduty": "us", "email": ""} {
 		req := planmodifier.StringRequest{Config: cfgFor(kind), Plan: plan(kind), ConfigValue: types.StringNull(),
-			PlanValue: types.StringUnknown(), State: emptyState(sch)}
+			PlanValue: types.StringUnknown(), State: alEmptyState(sch)}
 		res := planmodifier.StringResponse{PlanValue: req.PlanValue}
 		defaultPagerDutyRegionModifier{}.PlanModifyString(ctx, req, &res)
 		if res.PlanValue.ValueString() != want || (want == "" && !res.PlanValue.IsNull()) {
@@ -473,7 +473,7 @@ func TestAlertChannelDefaultModifiers(t *testing.T) {
 func TestAlertChannelGoneIsRemovedFromState(t *testing.T) {
 	f, c := newFakeAlertsAPI(t)
 	r := &alertChannelResource{client: c}
-	sch := resourceSchema(t, r)
+	sch := alResourceSchema(t, r)
 	res := create(t, r, sch, map[string]tftypes.Value{
 		"name": tfStr("s"), "kind": tfStr("slack"), "url": tfStr(testSlackURL),
 		"roles": tfNull(tftypes.Set{ElementType: tftypes.String}), "region": tfNull(tftypes.String),
@@ -495,7 +495,7 @@ func TestAlertChannelImportThenFillInTheURL(t *testing.T) {
 	f.channels = []map[string]any{{"id": "00000000-0000-4000-8000-0000000000aa", "name": "s", "kind": "slack",
 		"url_hint": maskURL(testSlackURL), "created_at": "2026-10-01T00:00:00Z"}}
 	r := &alertChannelResource{client: c}
-	sch := resourceSchema(t, r)
+	sch := alResourceSchema(t, r)
 	ctx := context.Background()
 
 	rr := importAndRead(t, r, sch, "00000000-0000-4000-8000-0000000000aa")
@@ -538,7 +538,7 @@ func TestAlertChannelImportThenFillInTheURL(t *testing.T) {
 func TestAlertChannelInUseExplainsCreateBeforeDestroy(t *testing.T) {
 	f, c := newFakeAlertsAPI(t)
 	r := &alertChannelResource{client: c}
-	sch := resourceSchema(t, r)
+	sch := alResourceSchema(t, r)
 	res := create(t, r, sch, map[string]tftypes.Value{
 		"name": tfStr("s"), "kind": tfStr("slack"), "url": tfStr(testSlackURL),
 		"roles": tfNull(tftypes.Set{ElementType: tftypes.String}), "region": tfNull(tftypes.String),
@@ -568,7 +568,7 @@ func TestAlertChannelInUseExplainsCreateBeforeDestroy(t *testing.T) {
 func TestAlertChannelRefusalKeepsTheServersWords(t *testing.T) {
 	_, c := newFakeAlertsAPI(t)
 	r := &alertChannelResource{client: c}
-	sch := resourceSchema(t, r)
+	sch := alResourceSchema(t, r)
 	res := create(t, r, sch, map[string]tftypes.Value{
 		"name": tfStr("h"), "kind": tfStr("webhook"), "url": tfStr("https://10.0.0.5/hook"),
 		"roles": tfNull(tftypes.Set{ElementType: tftypes.String}), "region": tfNull(tftypes.String),
@@ -583,7 +583,7 @@ func TestAlertChannelRefusalKeepsTheServersWords(t *testing.T) {
 
 func TestAlertChannelConfigValidation(t *testing.T) {
 	r := &alertChannelResource{}
-	sch := resourceSchema(t, r)
+	sch := alResourceSchema(t, r)
 	set := tftypes.Set{ElementType: tftypes.String}
 	cases := []struct {
 		name string
@@ -622,7 +622,7 @@ func TestAlertChannelConfigValidation(t *testing.T) {
 }
 
 func TestAlertChannelAttributeValidators(t *testing.T) {
-	sch := resourceSchema(t, &alertChannelResource{})
+	sch := alResourceSchema(t, &alertChannelResource{})
 	name := sch.Attributes["name"].(rschema.StringAttribute)
 	for _, good := range []string{"a", "On-call team", strings.Repeat("x", 80)} {
 		if d := runStringValidators(name.Validators, good); d.HasError() {
@@ -683,7 +683,7 @@ func newRuleFixture(t *testing.T) (*fakeAlertsAPI, *alertRuleResource, rschema.S
 	chID := "00000000-0000-4000-8000-0000000000c1"
 	f.channels = []map[string]any{{"id": chID, "name": "s", "kind": "email", "roles": []string{"owner"}}}
 	r := &alertRuleResource{client: c}
-	return f, r, resourceSchema(t, r), chID
+	return f, r, alResourceSchema(t, r), chID
 }
 
 func TestAlertRuleCreateReadUpdateDelete(t *testing.T) {
@@ -721,7 +721,7 @@ func TestAlertRuleCreateReadUpdateDelete(t *testing.T) {
 	}
 
 	// Update is a PUT of the whole rule, under the same id.
-	plan := planOf(t, sch, map[string]tftypes.Value{
+	plan := alPlanOf(t, sch, map[string]tftypes.Value{
 		"id": tfStr(got.ID.ValueString()), "name": tfStr("memory very high"), "metric": tfStr("memory_pct"),
 		"instance_id": tfStr(testInstanceID), "op": tfStr("gt"), "threshold": tfNum(95), "for_minutes": tfNum(10),
 		"cooldown_minutes": tfNum(30), "channel_ids": tfStrSet(chID), "enabled": tfBool(false),
@@ -826,7 +826,7 @@ func TestAlertRuleKeepsTheConfiguredIDSpelling(t *testing.T) {
 
 func TestAlertRuleConfigValidation(t *testing.T) {
 	r := &alertRuleResource{}
-	sch := resourceSchema(t, r)
+	sch := alResourceSchema(t, r)
 	ch := tfStrSet("00000000-0000-4000-8000-0000000000c1")
 	cases := []struct {
 		name string
@@ -854,7 +854,7 @@ func TestAlertRuleConfigValidation(t *testing.T) {
 }
 
 func TestAlertRuleAttributeValidatorsMirrorTheZodSchema(t *testing.T) {
-	sch := resourceSchema(t, &alertRuleResource{})
+	sch := alResourceSchema(t, &alertRuleResource{})
 	ctx := context.Background()
 
 	metric := sch.Attributes["metric"].(rschema.StringAttribute)
@@ -925,7 +925,7 @@ func TestAlertRuleAttributeValidatorsMirrorTheZodSchema(t *testing.T) {
 
 func TestAlertRuleDefaultsFollowTheMetric(t *testing.T) {
 	ctx := context.Background()
-	sch := resourceSchema(t, &alertRuleResource{})
+	sch := alResourceSchema(t, &alertRuleResource{})
 	for metric, want := range map[string]struct {
 		op   string
 		th   float64
@@ -937,7 +937,7 @@ func TestAlertRuleDefaultsFollowTheMetric(t *testing.T) {
 		"credit_runway_days": {"lt", 7, 5},
 		"failover":           {"gt", 0, 0},
 	} {
-		cfg := tfsdk.Config{Schema: sch, Raw: planOf(t, sch, map[string]tftypes.Value{"metric": tfStr(metric)})}
+		cfg := tfsdk.Config{Schema: sch, Raw: alPlanOf(t, sch, map[string]tftypes.Value{"metric": tfStr(metric)})}
 		plan := tfsdk.Plan{Schema: sch, Raw: cfg.Raw}
 
 		sres := planmodifier.StringResponse{PlanValue: types.StringUnknown()}
@@ -975,7 +975,7 @@ func TestAlertMetricsMatchTheAPI(t *testing.T) {
 	if got := strings.Join(alertMetricNames(), ","); got != want {
 		t.Errorf("metrics = %s", got)
 	}
-	sch := resourceSchema(t, &alertRuleResource{})
+	sch := alResourceSchema(t, &alertRuleResource{})
 	desc := sch.Attributes["metric"].GetMarkdownDescription()
 	for name := range alertMetrics {
 		if !strings.Contains(desc, "`"+name+"`") {

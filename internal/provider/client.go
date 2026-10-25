@@ -64,6 +64,16 @@ type APIError struct {
 //
 // Anything that does not decode still produces an error carrying the status.
 func decodeAPIError(status int, raw []byte) *APIError {
+	apiErr := decodeAPIErrorEnvelope(status, raw)
+	// Some refusals carry only field errors and no message (a 400 from schema
+	// validation); name the fields rather than show a bare status.
+	if apiErr.Message == "" {
+		apiErr.Message = issuesMessage(raw)
+	}
+	return apiErr
+}
+
+func decodeAPIErrorEnvelope(status int, raw []byte) *APIError {
 	apiErr := &APIError{Status: status}
 	var envelope struct {
 		Error struct {

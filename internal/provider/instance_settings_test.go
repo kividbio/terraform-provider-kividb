@@ -40,12 +40,12 @@ func instanceJSON(t *testing.T, over map[string]any) string {
 // paidInstanceVals is a Pro database with TLS on, as configured and planned.
 func paidInstanceVals() map[string]tftypes.Value {
 	vals := createConfigVals()
-	vals["tls_enabled"] = boolean(true)
-	vals["kividb_version"] = str("1.1.2")
-	vals["free_tier"] = boolean(false)
+	vals["tls_enabled"] = dsBoolean(true)
+	vals["kividb_version"] = dsStr("1.1.2")
+	vals["free_tier"] = dsBoolean(false)
 	vals["shard_count"] = num(1)
-	vals["replication_tls"] = boolean(false)
-	vals["client_cert_mode"] = str("off")
+	vals["replication_tls"] = dsBoolean(false)
+	vals["client_cert_mode"] = dsStr("off")
 	vals["client_ca_pem"] = nullStr()
 	vals["cloud_account_id"] = nullStr()
 	return vals
@@ -53,8 +53,8 @@ func paidInstanceVals() map[string]tftypes.Value {
 
 func instanceStateVals() map[string]tftypes.Value {
 	vals := paidInstanceVals()
-	vals["id"] = str("i-1")
-	vals["status"] = str("running")
+	vals["id"] = dsStr("i-1")
+	vals["status"] = dsStr("running")
 	return vals
 }
 
@@ -67,9 +67,9 @@ func TestCreateSendsFreeTierAndReadsItBack(t *testing.T) {
 	}))
 
 	vals := paidInstanceVals()
-	vals["tier"], vals["data_size_gb"], vals["replica_count"] = str("essentials"), num(1), num(0)
-	vals["free_tier"], vals["tls_enabled"], vals["aof_enabled"] = boolean(true), boolean(false), boolean(false)
-	res := doCreate(t, &instanceResource{client: f.client()}, vals)
+	vals["tier"], vals["data_size_gb"], vals["replica_count"] = dsStr("essentials"), num(1), num(0)
+	vals["free_tier"], vals["tls_enabled"], vals["aof_enabled"] = dsBoolean(true), dsBoolean(false), dsBoolean(false)
+	res := dsDoCreate(t, &instanceResource{client: f.client()}, vals)
 	failOn(t, res.Diagnostics)
 
 	body := f.sent("POST /instances")[0].Body
@@ -91,8 +91,8 @@ func TestCreateSendsShardCount(t *testing.T) {
 	f.answer("POST /instances", 202, `{"instance_id":"i-1"}`)
 	f.answer("GET /instances/i-1", 200, instanceJSON(t, map[string]any{"shard_count": 3, "tls_enabled": false}))
 	vals := paidInstanceVals()
-	vals["shard_count"], vals["tls_enabled"] = num(3), boolean(false)
-	res := doCreate(t, &instanceResource{client: f.client()}, vals)
+	vals["shard_count"], vals["tls_enabled"] = num(3), dsBoolean(false)
+	res := dsDoCreate(t, &instanceResource{client: f.client()}, vals)
 	failOn(t, res.Diagnostics)
 	if body := f.sent("POST /instances")[0].Body; body["shard_count"] != float64(3) {
 		t.Errorf("shard_count was not sent: %v", body)
@@ -122,9 +122,9 @@ func TestCreateAppliesNodeSecurityOnceRunning(t *testing.T) {
 	})
 
 	vals := paidInstanceVals()
-	vals["replication_tls"], vals["client_cert_mode"], vals["client_ca_pem"] = boolean(true), str("optional"), str(testCA)
-	vals["wait_for_ready"] = boolean(false) // waited for anyway: the change needs a running database
-	res := doCreate(t, &instanceResource{client: f.client()}, vals)
+	vals["replication_tls"], vals["client_cert_mode"], vals["client_ca_pem"] = dsBoolean(true), dsStr("optional"), dsStr(testCA)
+	vals["wait_for_ready"] = dsBoolean(false) // waited for anyway: the change needs a running database
+	res := dsDoCreate(t, &instanceResource{client: f.client()}, vals)
 	failOn(t, res.Diagnostics)
 
 	sent := f.sent("POST /instances/i-1/binary")
@@ -154,7 +154,7 @@ func TestCreateWithoutNodeSecurityMakesNoBinaryChange(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("POST /instances", 202, `{"instance_id":"i-1"}`)
 	f.answer("GET /instances/i-1", 200, instanceJSON(t, nil))
-	failOn(t, doCreate(t, &instanceResource{client: f.client()}, paidInstanceVals()).Diagnostics)
+	failOn(t, dsDoCreate(t, &instanceResource{client: f.client()}, paidInstanceVals()).Diagnostics)
 	// No route for /binary is registered: the fake fails the test if it is called.
 }
 
@@ -176,8 +176,8 @@ func TestUpdateSendsClientCertificatesAndKeepsTheConfiguredPEM(t *testing.T) {
 	configured := strings.ReplaceAll(testCA, "\n", "\r\n") + "\r\n"
 	plan := instanceStateVals()
 	delete(plan, "status")
-	plan["client_cert_mode"], plan["client_ca_pem"] = str("optional"), str(configured)
-	res := doUpdate(t, &instanceResource{client: f.client()}, instanceStateVals(), plan)
+	plan["client_cert_mode"], plan["client_ca_pem"] = dsStr("optional"), dsStr(configured)
+	res := dsDoUpdate(t, &instanceResource{client: f.client()}, instanceStateVals(), plan)
 	failOn(t, res.Diagnostics)
 
 	sent := f.sent("POST /instances/i-1/binary")
@@ -204,8 +204,8 @@ func TestUpdateRefusalIsSurfaced(t *testing.T) {
 	f.answer("POST /instances/i-1/binary", 400,
 		`{"error":{"code":"client_ca_invalid","message":"Certificate 1 (CN=leaf) is not a CA certificate."}}`)
 	plan := instanceStateVals()
-	plan["client_cert_mode"], plan["client_ca_pem"] = str("optional"), str(testCA)
-	res := doUpdate(t, &instanceResource{client: f.client()}, instanceStateVals(), plan)
+	plan["client_cert_mode"], plan["client_ca_pem"] = dsStr("optional"), dsStr(testCA)
+	res := dsDoUpdate(t, &instanceResource{client: f.client()}, instanceStateVals(), plan)
 	wantError(t, res.Diagnostics, "Certificate 1 (CN=leaf) is not a CA certificate.")
 }
 
@@ -241,14 +241,14 @@ func mustInstance(t *testing.T, body string) *Instance {
 func TestInstanceConfigValidation(t *testing.T) {
 	free := func() map[string]tftypes.Value {
 		return map[string]tftypes.Value{
-			"tier": str("essentials"), "cloud": str("aws"), "region": str("eu-central-1"),
-			"data_size_gb": num(1), "free_tier": boolean(true),
+			"tier": dsStr("essentials"), "cloud": dsStr("aws"), "region": dsStr("eu-central-1"),
+			"data_size_gb": num(1), "free_tier": dsBoolean(true),
 		}
 	}
 	paid := func() map[string]tftypes.Value {
 		return map[string]tftypes.Value{
-			"tier": str("pro"), "cloud": str("aws"), "region": str("eu-central-1"), "data_size_gb": num(8),
-			"tls_enabled": boolean(true),
+			"tier": dsStr("pro"), "cloud": dsStr("aws"), "region": dsStr("eu-central-1"), "data_size_gb": num(8),
+			"tls_enabled": dsBoolean(true),
 		}
 	}
 	with := func(base map[string]tftypes.Value, kv ...any) map[string]tftypes.Value {
@@ -265,25 +265,25 @@ func TestInstanceConfigValidation(t *testing.T) {
 	}{
 		{"free tier as the API makes it", free(), ""},
 		{"free tier of 8 GB", with(free(), "data_size_gb", num(8)), "data_size_gb"},
-		{"free tier on Pro", with(free(), "tier", str("pro")), "tier"},
-		{"free tier on Azure", with(free(), "cloud", str("azure")), "cloud"},
+		{"free tier on Pro", with(free(), "tier", dsStr("pro")), "tier"},
+		{"free tier on Azure", with(free(), "cloud", dsStr("azure")), "cloud"},
 		{"free tier with replicas", with(free(), "replica_count", num(1)), "replica_count"},
-		{"free tier with TLS", with(free(), "tls_enabled", boolean(true)), "tls_enabled"},
-		{"free tier with AOF", with(free(), "aof_enabled", boolean(true)), "aof_enabled"},
+		{"free tier with TLS", with(free(), "tls_enabled", dsBoolean(true)), "tls_enabled"},
+		{"free tier with AOF", with(free(), "aof_enabled", dsBoolean(true)), "aof_enabled"},
 		{"free tier sharded", with(free(), "shard_count", num(2)), "shard_count"},
-		{"paid with AOF off", with(paid(), "aof_enabled", boolean(false)), "aof_enabled"},
-		{"paid with AOF on", with(paid(), "aof_enabled", boolean(true)), ""},
-		{"encrypted replication", with(paid(), "replication_tls", boolean(true)), ""},
-		{"encrypted replication without TLS", with(paid(), "replication_tls", boolean(true), "tls_enabled", boolean(false)), "replication_tls"},
-		{"encrypted replication sharded", with(paid(), "replication_tls", boolean(true), "shard_count", num(3)), "replication_tls"},
-		{"optional client certs", with(paid(), "client_cert_mode", str("optional"), "client_ca_pem", str(testCA)), ""},
-		{"client certs without a CA", with(paid(), "client_cert_mode", str("optional")), "client_ca_pem"},
-		{"client certs without TLS", with(paid(), "client_cert_mode", str("optional"), "client_ca_pem", str(testCA), "tls_enabled", boolean(false)), "client_cert_mode"},
-		{"required without tls_only", with(paid(), "client_cert_mode", str("required"), "client_ca_pem", str(testCA)), "client_cert_mode"},
-		{"required with tls_only", with(paid(), "client_cert_mode", str("required"), "client_ca_pem", str(testCA), "tls_only", boolean(true)), ""},
-		{"a CA with certs off", with(paid(), "client_ca_pem", str(testCA)), "client_ca_pem"},
+		{"paid with AOF off", with(paid(), "aof_enabled", dsBoolean(false)), "aof_enabled"},
+		{"paid with AOF on", with(paid(), "aof_enabled", dsBoolean(true)), ""},
+		{"encrypted replication", with(paid(), "replication_tls", dsBoolean(true)), ""},
+		{"encrypted replication without TLS", with(paid(), "replication_tls", dsBoolean(true), "tls_enabled", dsBoolean(false)), "replication_tls"},
+		{"encrypted replication sharded", with(paid(), "replication_tls", dsBoolean(true), "shard_count", num(3)), "replication_tls"},
+		{"optional client certs", with(paid(), "client_cert_mode", dsStr("optional"), "client_ca_pem", dsStr(testCA)), ""},
+		{"client certs without a CA", with(paid(), "client_cert_mode", dsStr("optional")), "client_ca_pem"},
+		{"client certs without TLS", with(paid(), "client_cert_mode", dsStr("optional"), "client_ca_pem", dsStr(testCA), "tls_enabled", dsBoolean(false)), "client_cert_mode"},
+		{"required without tls_only", with(paid(), "client_cert_mode", dsStr("required"), "client_ca_pem", dsStr(testCA)), "client_cert_mode"},
+		{"required with tls_only", with(paid(), "client_cert_mode", dsStr("required"), "client_ca_pem", dsStr(testCA), "tls_only", dsBoolean(true)), ""},
+		{"a CA with certs off", with(paid(), "client_ca_pem", dsStr(testCA)), "client_ca_pem"},
 		// Unknown at plan time is checked by the API at apply instead.
-		{"unknown TLS", with(paid(), "replication_tls", boolean(true), "tls_enabled", tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)), ""},
+		{"unknown TLS", with(paid(), "replication_tls", dsBoolean(true), "tls_enabled", tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)), ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -321,8 +321,8 @@ func TestAofFollowsTheTier(t *testing.T) {
 		free tftypes.Value
 		want types.Bool
 	}{
-		{boolean(true), types.BoolValue(false)},
-		{boolean(false), types.BoolValue(true)},
+		{dsBoolean(true), types.BoolValue(false)},
+		{dsBoolean(false), types.BoolValue(true)},
 		{tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue), types.BoolUnknown()},
 	} {
 		vals := paidInstanceVals()
@@ -345,8 +345,8 @@ func TestClientCAFollowsTheMode(t *testing.T) {
 		mode tftypes.Value
 		want types.String
 	}{
-		{str("off"), types.StringNull()},
-		{str("optional"), types.StringValue(testCA)},
+		{dsStr("off"), types.StringNull()},
+		{dsStr("optional"), types.StringValue(testCA)},
 		{tftypes.NewValue(tftypes.String, tftypes.UnknownValue), types.StringUnknown()},
 	} {
 		vals := paidInstanceVals()

@@ -19,8 +19,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 )
 
-const testInstanceID = "790df3ae-c064-45f5-b924-9ed89471fd72"
-
 // fakePipelineAPI is the data integration routes as the API implements them
 // (apps/api/src/routes/data-integration.ts): PUT is an upsert that creates a
 // pipeline running, start/stop flip desired_state, DELETE drops it. Refusals
@@ -31,17 +29,17 @@ type fakePipelineAPI struct {
 	pipelines map[string]*DataPipeline
 	calls     []string
 	lastPut   map[string]any
-	refuse    map[string]refusal
+	refuse    map[string]dpRefusal
 	deleteOut string
 }
 
-type refusal struct {
+type dpRefusal struct {
 	status int
 	body   string
 }
 
 func newFakePipelineAPI(t *testing.T) (*fakePipelineAPI, *httptest.Server) {
-	f := &fakePipelineAPI{t: t, pipelines: map[string]*DataPipeline{}, refuse: map[string]refusal{}}
+	f := &fakePipelineAPI{t: t, pipelines: map[string]*DataPipeline{}, refuse: map[string]dpRefusal{}}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
 	return f, srv
@@ -233,21 +231,21 @@ func plannedPipeline(t *testing.T, enabled bool) dataPipelineModel {
 	}
 }
 
-func planOf(t *testing.T, sch rschema.Schema, m dataPipelineModel) tfsdk.Plan {
+func dpPlanOf(t *testing.T, sch rschema.Schema, m dataPipelineModel) tfsdk.Plan {
 	t.Helper()
 	p := tfsdk.Plan{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(context.Background()), nil)}
 	failOn(t, p.Set(context.Background(), &m))
 	return p
 }
 
-func emptyState(sch rschema.Schema) tfsdk.State {
+func dpEmptyState(sch rschema.Schema) tfsdk.State {
 	return tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(context.Background()), nil)}
 }
 
 func createPipeline(t *testing.T, r *dataPipelineResource, sch rschema.Schema, m dataPipelineModel) (tfsdk.State, diag.Diagnostics) {
 	t.Helper()
-	res := resource.CreateResponse{State: emptyState(sch)}
-	r.Create(context.Background(), resource.CreateRequest{Plan: planOf(t, sch, m)}, &res)
+	res := resource.CreateResponse{State: dpEmptyState(sch)}
+	r.Create(context.Background(), resource.CreateRequest{Plan: dpPlanOf(t, sch, m)}, &res)
 	return res.State, res.Diagnostics
 }
 
@@ -258,7 +256,7 @@ func stateModel(t *testing.T, s tfsdk.State) dataPipelineModel {
 	return m
 }
 
-func diagText(d diag.Diagnostics) string {
+func dpDiagText(d diag.Diagnostics) string {
 	var b strings.Builder
 	for _, e := range d {
 		b.WriteString(e.Summary() + ": " + e.Detail() + "\n")
@@ -340,8 +338,8 @@ func TestPipelineCreateRefusesAnExistingName(t *testing.T) {
 	sch := pipelineSchema(t)
 
 	_, d := createPipeline(t, r, sch, plannedPipeline(t, true))
-	if !d.HasError() || !strings.Contains(diagText(d), "terraform import") {
-		t.Fatalf("expected a refusal pointing at import, got %v", d)
+	if !d.HasError() || !strings.Contains(dpDiagText(d), "terraform import") {
+		t.Fatalf("expected a dpRefusal pointing at import, got %v", d)
 	}
 	if f.took("PUT /data-integration/orders-cdc") {
 		t.Errorf("the existing pipeline was overwritten")
@@ -362,11 +360,11 @@ func TestPipelineCreateRefusalsKeepTheServersWords(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, srv := newFakePipelineAPI(t)
-			f.refuse["PUT /data-integration/orders-cdc"] = refusal{tc.status, tc.body}
+			f.refuse["PUT /data-integration/orders-cdc"] = dpRefusal{tc.status, tc.body}
 			r := &dataPipelineResource{client: NewClient(srv.URL, "k")}
 			state, d := createPipeline(t, r, pipelineSchema(t), plannedPipeline(t, true))
-			if !d.HasError() || !strings.Contains(diagText(d), tc.want) {
-				t.Fatalf("the API's message was lost: %s", diagText(d))
+			if !d.HasError() || !strings.Contains(dpDiagText(d), tc.want) {
+				t.Fatalf("the API's message was lost: %s", dpDiagText(d))
 			}
 			if !state.Raw.IsNull() {
 				t.Errorf("a refused create must write no state")
@@ -422,8 +420,8 @@ func TestPipelineReadKeepsThePasswordAndDropsAGonePipeline(t *testing.T) {
 func updatePipeline(t *testing.T, r *dataPipelineResource, sch rschema.Schema, prior tfsdk.State, plan dataPipelineModel) (tfsdk.State, diag.Diagnostics) {
 	t.Helper()
 	// The framework hands Update a null state, not the prior one.
-	res := resource.UpdateResponse{State: emptyState(sch)}
-	r.Update(context.Background(), resource.UpdateRequest{Plan: planOf(t, sch, plan), State: prior}, &res)
+	res := resource.UpdateResponse{State: dpEmptyState(sch)}
+	r.Update(context.Background(), resource.UpdateRequest{Plan: dpPlanOf(t, sch, plan), State: prior}, &res)
 	return res.State, res.Diagnostics
 }
 
@@ -519,12 +517,12 @@ func TestPipelineStartRefusedForCreditKeepsTheServersWords(t *testing.T) {
 	failOn(t, d)
 
 	msg := "A pipeline costs about $29.20 a month at $0.04 an hour, on top of $10.00 a month already committed to your running databases and pipelines, and your balance is $5.00. Add $34.20 in credits to run it."
-	f.refuse["POST /data-integration/orders-cdc/start"] = refusal{402, `{"error":{"code":"insufficient_credits","message":"` + msg + `"}}`}
+	f.refuse["POST /data-integration/orders-cdc/start"] = dpRefusal{402, `{"error":{"code":"insufficient_credits","message":"` + msg + `"}}`}
 	plan := nextPlan(t, state)
 	plan.Enabled = types.BoolValue(true)
 	state, d = updatePipeline(t, r, sch, state, plan)
-	if !d.HasError() || !strings.Contains(diagText(d), msg) {
-		t.Fatalf("credit refusal lost: %s", diagText(d))
+	if !d.HasError() || !strings.Contains(dpDiagText(d), msg) {
+		t.Fatalf("credit dpRefusal lost: %s", dpDiagText(d))
 	}
 	if stateModel(t, state).Enabled.ValueBool() {
 		t.Errorf("a refused start must leave state saying stopped, so the next plan tries again")
@@ -565,11 +563,11 @@ func TestPipelineDeleteRefusedForCleanupKeepsTheServersWords(t *testing.T) {
 	failOn(t, d)
 
 	msg := "Could not drop the replication slot kividb_0123456789abcdef in the source: connect ETIMEDOUT. The pipeline is stopped. Fix the connection and delete again, or delete with ?force=true: KiviDB then keeps trying to drop it for about four days and tells you if it cannot."
-	f.refuse["DELETE /data-integration/orders-cdc"] = refusal{409, `{"error":{"code":"source_cleanup_failed","message":"` + msg + `"}}`}
+	f.refuse["DELETE /data-integration/orders-cdc"] = dpRefusal{409, `{"error":{"code":"source_cleanup_failed","message":"` + msg + `"}}`}
 	res := deletePipeline(r, state)
-	text := diagText(res.Diagnostics)
+	text := dpDiagText(res.Diagnostics)
 	if !res.Diagnostics.HasError() || !strings.Contains(text, msg) || !strings.Contains(text, "force_delete = true") {
-		t.Fatalf("cleanup refusal not surfaced verbatim with the Terraform way out: %s", text)
+		t.Fatalf("cleanup dpRefusal not surfaced verbatim with the Terraform way out: %s", text)
 	}
 	if f.took("DELETE /data-integration/orders-cdc?force=true") {
 		t.Errorf("force was sent without force_delete")
@@ -591,8 +589,8 @@ func TestPipelineForceDeleteWarnsAboutTheSlotLeftBehind(t *testing.T) {
 	if !f.took("DELETE /data-integration/orders-cdc?force=true") {
 		t.Errorf("force_delete did not send ?force=true: %v", f.calls)
 	}
-	if res.Diagnostics.WarningsCount() != 1 || !strings.Contains(diagText(res.Diagnostics), "kividb_0123456789abcdef") {
-		t.Errorf("the slot left in the source must be named in a warning: %s", diagText(res.Diagnostics))
+	if res.Diagnostics.WarningsCount() != 1 || !strings.Contains(dpDiagText(res.Diagnostics), "kividb_0123456789abcdef") {
+		t.Errorf("the slot left in the source must be named in a warning: %s", dpDiagText(res.Diagnostics))
 	}
 }
 
@@ -606,7 +604,7 @@ func TestPipelineImportByName(t *testing.T) {
 	failOn(t, d)
 	_ = f
 
-	res := resource.ImportStateResponse{State: emptyState(sch)}
+	res := resource.ImportStateResponse{State: dpEmptyState(sch)}
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "orders-cdc"}, &res)
 	failOn(t, res.Diagnostics)
 	got := stateModel(t, res.State)
@@ -622,10 +620,10 @@ func TestPipelineImportByName(t *testing.T) {
 		t.Errorf("tables not imported as stored: %+v", tables)
 	}
 
-	res = resource.ImportStateResponse{State: emptyState(sch)}
+	res = resource.ImportStateResponse{State: dpEmptyState(sch)}
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: "nope"}, &res)
-	if !res.Diagnostics.HasError() || !strings.Contains(diagText(res.Diagnostics), "No such pipeline.") {
-		t.Errorf("importing a missing pipeline must say so: %s", diagText(res.Diagnostics))
+	if !res.Diagnostics.HasError() || !strings.Contains(dpDiagText(res.Diagnostics), "No such pipeline.") {
+		t.Errorf("importing a missing pipeline must say so: %s", dpDiagText(res.Diagnostics))
 	}
 }
 
@@ -634,7 +632,7 @@ func TestPipelineImportByName(t *testing.T) {
 func validatePipeline(t *testing.T, m dataPipelineModel) diag.Diagnostics {
 	t.Helper()
 	sch := pipelineSchema(t)
-	cfg := tfsdk.Config{Schema: sch, Raw: planOf(t, sch, m).Raw}
+	cfg := tfsdk.Config{Schema: sch, Raw: dpPlanOf(t, sch, m).Raw}
 	var res resource.ValidateConfigResponse
 	(&dataPipelineResource{}).ValidateConfig(context.Background(), resource.ValidateConfigRequest{Config: cfg}, &res)
 	return res.Diagnostics
@@ -642,28 +640,28 @@ func validatePipeline(t *testing.T, m dataPipelineModel) diag.Diagnostics {
 
 func TestPipelineValidationMirrorsTheApi(t *testing.T) {
 	if d := validatePipeline(t, plannedPipeline(t, true)); d.HasError() {
-		t.Fatalf("a valid pipeline was refused: %s", diagText(d))
+		t.Fatalf("a valid pipeline was refused: %s", dpDiagText(d))
 	}
 
 	dup := plannedPipeline(t, true)
 	dup.Tables = tablesValue(t, customersTable(), customersTable())
-	if d := validatePipeline(t, dup); !strings.Contains(diagText(d), "listed more than once") {
-		t.Errorf("duplicate table not caught: %s", diagText(d))
+	if d := validatePipeline(t, dup); !strings.Contains(dpDiagText(d), "listed more than once") {
+		t.Errorf("duplicate table not caught: %s", dpDiagText(d))
 	}
 
 	my := plannedPipeline(t, true)
 	my.SourceType = types.StringValue("mysql")
 	my.Tables = tablesValue(t, customersTable())
-	if d := validatePipeline(t, my); !strings.Contains(diagText(d), "without a database") {
-		t.Errorf("dotted MySQL table not caught: %s", diagText(d))
+	if d := validatePipeline(t, my); !strings.Contains(dpDiagText(d), "without a database") {
+		t.Errorf("dotted MySQL table not caught: %s", dpDiagText(d))
 	}
 
 	cols := plannedPipeline(t, true)
 	tbl := customersTable()
 	tbl.Columns = stringList([]string{"name"})
 	cols.Tables = tablesValue(t, tbl)
-	if d := validatePipeline(t, cols); !strings.Contains(diagText(d), "{id} is not one of the columns") {
-		t.Errorf("placeholder outside columns not caught: %s", diagText(d))
+	if d := validatePipeline(t, cols); !strings.Contains(dpDiagText(d), "{id} is not one of the columns") {
+		t.Errorf("placeholder outside columns not caught: %s", dpDiagText(d))
 	}
 }
 
@@ -718,7 +716,7 @@ func TestPipelineReplacement(t *testing.T) {
 	mod := replaceUnlessSameID()
 	run := func(old, new string) bool {
 		res := planmodifier.StringResponse{PlanValue: types.StringValue(new)}
-		state := tfsdk.State{Schema: sch, Raw: planOf(t, sch, plannedPipeline(t, true)).Raw}
+		state := tfsdk.State{Schema: sch, Raw: dpPlanOf(t, sch, plannedPipeline(t, true)).Raw}
 		plan := tfsdk.Plan{Schema: sch, Raw: state.Raw}
 		mod.PlanModifyString(context.Background(), planmodifier.StringRequest{
 			StateValue: types.StringValue(old), PlanValue: types.StringValue(new), ConfigValue: types.StringValue(new),
@@ -754,12 +752,12 @@ func TestPipelineRefusedChangeKeepsTheState(t *testing.T) {
 	failOn(t, d)
 
 	msg := "connect ECONNREFUSED 203.0.113.7:5432"
-	f.refuse["PUT /data-integration/orders-cdc"] = refusal{422, `{"error":{"code":"source_check_failed","message":"` + msg + `"}}`}
+	f.refuse["PUT /data-integration/orders-cdc"] = dpRefusal{422, `{"error":{"code":"source_check_failed","message":"` + msg + `"}}`}
 	plan := nextPlan(t, state)
 	plan.SourceHost = types.StringValue("db2.example.com")
 	after, d := updatePipeline(t, r, sch, state, plan)
-	if !d.HasError() || !strings.Contains(diagText(d), msg) {
-		t.Fatalf("source check refusal lost: %s", diagText(d))
+	if !d.HasError() || !strings.Contains(dpDiagText(d), msg) {
+		t.Fatalf("source check dpRefusal lost: %s", dpDiagText(d))
 	}
 	if got := stateModel(t, after); got.SourceHost.ValueString() != "db.example.com" {
 		t.Errorf("state took the refused host: %v", got.SourceHost)

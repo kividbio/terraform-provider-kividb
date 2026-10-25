@@ -101,7 +101,7 @@ func (f *fakeAPI) sent(route string) []apiCall {
 
 // --- driving a resource the way Terraform does ---------------------------------
 
-func resourceSchema(t *testing.T, r resource.Resource) rschema.Schema {
+func dsResourceSchema(t *testing.T, r resource.Resource) rschema.Schema {
 	t.Helper()
 	var res resource.SchemaResponse
 	r.Schema(context.Background(), resource.SchemaRequest{}, &res)
@@ -143,9 +143,9 @@ func nullState(sch rschema.Schema) tfsdk.State {
 	return tfsdk.State{Schema: sch, Raw: tftypes.NewValue(sch.Type().TerraformType(context.Background()), nil)}
 }
 
-func doCreate(t *testing.T, r resource.Resource, vals map[string]tftypes.Value) resource.CreateResponse {
+func dsDoCreate(t *testing.T, r resource.Resource, vals map[string]tftypes.Value) resource.CreateResponse {
 	t.Helper()
-	sch := resourceSchema(t, r)
+	sch := dsResourceSchema(t, r)
 	res := resource.CreateResponse{State: nullState(sch)}
 	r.Create(context.Background(), resource.CreateRequest{
 		Plan: tfsdk.Plan{Schema: sch, Raw: planned(t, sch, vals)},
@@ -153,18 +153,18 @@ func doCreate(t *testing.T, r resource.Resource, vals map[string]tftypes.Value) 
 	return res
 }
 
-func doRead(t *testing.T, r resource.Resource, vals map[string]tftypes.Value) resource.ReadResponse {
+func dsDoRead(t *testing.T, r resource.Resource, vals map[string]tftypes.Value) resource.ReadResponse {
 	t.Helper()
-	sch := resourceSchema(t, r)
+	sch := dsResourceSchema(t, r)
 	st := tfsdk.State{Schema: sch, Raw: stored(t, sch, vals)}
 	res := resource.ReadResponse{State: st}
 	r.Read(context.Background(), resource.ReadRequest{State: st}, &res)
 	return res
 }
 
-func doUpdate(t *testing.T, r resource.Resource, prior, plan map[string]tftypes.Value) resource.UpdateResponse {
+func dsDoUpdate(t *testing.T, r resource.Resource, prior, plan map[string]tftypes.Value) resource.UpdateResponse {
 	t.Helper()
-	sch := resourceSchema(t, r)
+	sch := dsResourceSchema(t, r)
 	st := tfsdk.State{Schema: sch, Raw: stored(t, sch, prior)}
 	res := resource.UpdateResponse{State: st}
 	r.Update(context.Background(), resource.UpdateRequest{
@@ -174,25 +174,25 @@ func doUpdate(t *testing.T, r resource.Resource, prior, plan map[string]tftypes.
 	return res
 }
 
-func doDelete(t *testing.T, r resource.Resource, vals map[string]tftypes.Value) resource.DeleteResponse {
+func dsDoDelete(t *testing.T, r resource.Resource, vals map[string]tftypes.Value) resource.DeleteResponse {
 	t.Helper()
-	sch := resourceSchema(t, r)
+	sch := dsResourceSchema(t, r)
 	st := tfsdk.State{Schema: sch, Raw: stored(t, sch, vals)}
 	res := resource.DeleteResponse{State: st}
 	r.Delete(context.Background(), resource.DeleteRequest{State: st}, &res)
 	return res
 }
 
-func doImport(t *testing.T, r resource.ResourceWithImportState, id string) resource.ImportStateResponse {
+func dsDoImport(t *testing.T, r resource.ResourceWithImportState, id string) resource.ImportStateResponse {
 	t.Helper()
-	sch := resourceSchema(t, r)
+	sch := dsResourceSchema(t, r)
 	res := resource.ImportStateResponse{State: nullState(sch)}
 	r.ImportState(context.Background(), resource.ImportStateRequest{ID: id}, &res)
 	return res
 }
 
 // readDataSource runs a data source's Read with the given configuration.
-func readDataSource(t *testing.T, d datasource.DataSource, vals map[string]tftypes.Value) datasource.ReadResponse {
+func dsReadDataSource(t *testing.T, d datasource.DataSource, vals map[string]tftypes.Value) datasource.ReadResponse {
 	t.Helper()
 	sch := dataSourceSchema(t, d)
 	typ := sch.Type().TerraformType(context.Background())
@@ -202,10 +202,10 @@ func readDataSource(t *testing.T, d datasource.DataSource, vals map[string]tftyp
 	return res
 }
 
-func str(v string) tftypes.Value   { return tftypes.NewValue(tftypes.String, v) }
-func num(v int64) tftypes.Value    { return tftypes.NewValue(tftypes.Number, v) }
-func boolean(v bool) tftypes.Value { return tftypes.NewValue(tftypes.Bool, v) }
-func nullStr() tftypes.Value       { return tftypes.NewValue(tftypes.String, nil) }
+func dsStr(v string) tftypes.Value   { return tftypes.NewValue(tftypes.String, v) }
+func num(v int64) tftypes.Value      { return tftypes.NewValue(tftypes.Number, v) }
+func dsBoolean(v bool) tftypes.Value { return tftypes.NewValue(tftypes.Bool, v) }
+func nullStr() tftypes.Value         { return tftypes.NewValue(tftypes.String, nil) }
 
 // wantError fails unless the diagnostics hold an error whose text contains
 // every one of want.

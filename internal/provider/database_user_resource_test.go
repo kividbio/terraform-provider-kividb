@@ -37,8 +37,8 @@ func TestDatabaseUserCreateWithAGeneratedPassword(t *testing.T) {
 	f.answer("POST "+usersPath, 201, `{"id":"u-1","username":"reporting","profile":"read_only","password":"`+generatedPwd+`","job_id":"j-1"}`)
 	f.answer("GET "+usersPath, 200, userListJSON)
 
-	res := doCreate(t, testUserResource(f), map[string]tftypes.Value{
-		"instance_id": str("i-1"), "username": str("reporting"), "profile": str("read_only"),
+	res := dsDoCreate(t, testUserResource(f), map[string]tftypes.Value{
+		"instance_id": dsStr("i-1"), "username": dsStr("reporting"), "profile": dsStr("read_only"),
 	})
 	failOn(t, res.Diagnostics)
 
@@ -68,9 +68,9 @@ func TestDatabaseUserCreateWithAChosenPassword(t *testing.T) {
 	})
 	f.answer("GET "+usersPath, 200, userListJSON)
 
-	res := doCreate(t, testUserResource(f), map[string]tftypes.Value{
-		"instance_id": str("i-1"), "username": str("reporting"), "profile": str("read_write"),
-		"password": str("a-chosen-password-1"),
+	res := dsDoCreate(t, testUserResource(f), map[string]tftypes.Value{
+		"instance_id": dsStr("i-1"), "username": dsStr("reporting"), "profile": dsStr("read_write"),
+		"password": dsStr("a-chosen-password-1"),
 	})
 	failOn(t, res.Diagnostics)
 	if sent := f.sent("POST " + usersPath); sent[0].Body["password"] != "a-chosen-password-1" {
@@ -95,8 +95,8 @@ func TestDatabaseUserCreateWaitsForTheDatabaseToRun(t *testing.T) {
 	})
 	f.answer("GET "+usersPath, 200, userListJSON)
 
-	res := doCreate(t, testUserResource(f), map[string]tftypes.Value{
-		"instance_id": str("i-1"), "username": str("reporting"), "profile": str("read_only"),
+	res := dsDoCreate(t, testUserResource(f), map[string]tftypes.Value{
+		"instance_id": dsStr("i-1"), "username": dsStr("reporting"), "profile": dsStr("read_only"),
 	})
 	failOn(t, res.Diagnostics)
 	if attempts != 3 {
@@ -111,8 +111,8 @@ func TestDatabaseUserWaitIsBounded(t *testing.T) {
 	r := testUserResource(f)
 	r.notRunningTimeout = 20 * time.Millisecond
 
-	res := doCreate(t, r, map[string]tftypes.Value{
-		"instance_id": str("i-1"), "username": str("reporting"), "profile": str("read_only"),
+	res := dsDoCreate(t, r, map[string]tftypes.Value{
+		"instance_id": dsStr("i-1"), "username": dsStr("reporting"), "profile": dsStr("read_only"),
 	})
 	wantError(t, res.Diagnostics, "not running", "after 20ms")
 }
@@ -132,8 +132,8 @@ func TestDatabaseUserRefusalsAreExplained(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFakeAPI(t)
 			f.answer("POST "+usersPath, tc.status, tc.body)
-			res := doCreate(t, testUserResource(f), map[string]tftypes.Value{
-				"instance_id": str("i-1"), "username": str("reporting"), "profile": str("read_only"),
+			res := dsDoCreate(t, testUserResource(f), map[string]tftypes.Value{
+				"instance_id": dsStr("i-1"), "username": dsStr("reporting"), "profile": dsStr("read_only"),
 			})
 			wantError(t, res.Diagnostics, tc.want...)
 		})
@@ -142,8 +142,8 @@ func TestDatabaseUserRefusalsAreExplained(t *testing.T) {
 
 func userStateVals() map[string]tftypes.Value {
 	return map[string]tftypes.Value{
-		"id": str("i-1/reporting"), "instance_id": str("i-1"), "username": str("reporting"),
-		"profile": str("read_only"), "password": str(generatedPwd), "created_at": str("2026-10-25T10:00:00.000Z"),
+		"id": dsStr("i-1/reporting"), "instance_id": dsStr("i-1"), "username": dsStr("reporting"),
+		"profile": dsStr("read_only"), "password": dsStr(generatedPwd), "created_at": dsStr("2026-10-25T10:00:00.000Z"),
 	}
 }
 
@@ -153,7 +153,7 @@ func TestDatabaseUserReadSeesTheCurrentPassword(t *testing.T) {
 	f.answer("GET "+usersPath, 200, strings.Replace(userListJSON, "read_only", "pubsub", 1))
 	f.answer("GET "+userPath+"/password", 200, `{"username":"reporting","password":"changed-in-the-console"}`)
 
-	res := doRead(t, testUserResource(f), userStateVals())
+	res := dsDoRead(t, testUserResource(f), userStateVals())
 	failOn(t, res.Diagnostics)
 	got := userState(t, res.State)
 	if got.Password.ValueString() != "changed-in-the-console" || got.Profile.ValueString() != "pubsub" {
@@ -173,7 +173,7 @@ func TestDatabaseUserGoneIsRemovedFromState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFakeAPI(t)
 			f.answer("GET "+usersPath, tc.status, tc.body)
-			res := doRead(t, testUserResource(f), userStateVals())
+			res := dsDoRead(t, testUserResource(f), userStateVals())
 			failOn(t, res.Diagnostics)
 			if !res.State.Raw.IsNull() {
 				t.Errorf("a user that is gone must be removed from state")
@@ -188,7 +188,7 @@ func TestDatabaseUserReadKeepsThePasswordWhenItCannotBeRead(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("GET "+usersPath, 200, userListJSON)
 	f.answer("GET "+userPath+"/password", 403, `{"error":{"code":"forbidden","message":"no"}}`)
-	res := doRead(t, testUserResource(f), userStateVals())
+	res := dsDoRead(t, testUserResource(f), userStateVals())
 	failOn(t, res.Diagnostics)
 	if got := userState(t, res.State); got.Password.ValueString() != generatedPwd {
 		t.Errorf("password = %v", got.Password)
@@ -205,14 +205,14 @@ func TestDatabaseUserUpdate(t *testing.T) {
 	}{
 		{
 			name:     "profile only",
-			plan:     map[string]tftypes.Value{"profile": str("read_write"), "password": str(generatedPwd)},
+			plan:     map[string]tftypes.Value{"profile": dsStr("read_write"), "password": dsStr(generatedPwd)},
 			wantBody: map[string]any{"profile": "read_write"},
 			reply:    `{"ok":true,"username":"reporting","profile":"read_write"}`,
 			wantPwd:  generatedPwd,
 		},
 		{
 			name:     "a chosen password",
-			plan:     map[string]tftypes.Value{"profile": str("read_only"), "password": str("a-new-chosen-password")},
+			plan:     map[string]tftypes.Value{"profile": dsStr("read_only"), "password": dsStr("a-new-chosen-password")},
 			wantBody: map[string]any{"password": "a-new-chosen-password"},
 			reply:    `{"ok":true,"username":"reporting","profile":"read_only","password":"a-new-chosen-password"}`,
 			wantPwd:  "a-new-chosen-password",
@@ -220,7 +220,7 @@ func TestDatabaseUserUpdate(t *testing.T) {
 		{
 			// The rotation trigger changed, so the password was planned unknown.
 			name: "rotation",
-			plan: map[string]tftypes.Value{"profile": str("read_only"), "rotation_trigger": str("2026-11"),
+			plan: map[string]tftypes.Value{"profile": dsStr("read_only"), "rotation_trigger": dsStr("2026-11"),
 				"password": tftypes.NewValue(tftypes.String, tftypes.UnknownValue)},
 			wantBody: map[string]any{"rotate_password": true},
 			reply:    `{"ok":true,"username":"reporting","profile":"read_only","password":"fresh-from-the-api-000000"}`,
@@ -235,7 +235,7 @@ func TestDatabaseUserUpdate(t *testing.T) {
 			for k, v := range tc.plan {
 				plan[k] = v
 			}
-			res := doUpdate(t, testUserResource(f), userStateVals(), plan)
+			res := dsDoUpdate(t, testUserResource(f), userStateVals(), plan)
 			failOn(t, res.Diagnostics)
 			sent := f.sent("PATCH " + userPath)
 			if len(sent) != 1 || len(sent[0].Body) != len(tc.wantBody) {
@@ -257,15 +257,15 @@ func TestDatabaseUserUpdateRefusalIsSurfaced(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("PATCH "+userPath, 400, `{"error":{"code":"invalid_body","message":"password: String must contain at least 12 character(s)"}}`)
 	plan := userStateVals()
-	plan["password"] = str("short-but-validated-elsewhere")
-	res := doUpdate(t, testUserResource(f), userStateVals(), plan)
+	plan["password"] = dsStr("short-but-validated-elsewhere")
+	res := dsDoUpdate(t, testUserResource(f), userStateVals(), plan)
 	wantError(t, res.Diagnostics, "password: String must contain at least 12 character(s)")
 }
 
 func TestDatabaseUserDelete(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("DELETE "+userPath, 202, `{"ok":true,"job_id":"j-2"}`)
-	failOn(t, doDelete(t, testUserResource(f), userStateVals()).Diagnostics)
+	failOn(t, dsDoDelete(t, testUserResource(f), userStateVals()).Diagnostics)
 	if len(f.sent("DELETE "+userPath)) != 1 {
 		t.Error("the user was not deleted")
 	}
@@ -273,7 +273,7 @@ func TestDatabaseUserDelete(t *testing.T) {
 	// Already gone is not a failure.
 	g := newFakeAPI(t)
 	g.answer("DELETE "+userPath, 404, `{"error":{"code":"not_found"}}`)
-	failOn(t, doDelete(t, testUserResource(g), userStateVals()).Diagnostics)
+	failOn(t, dsDoDelete(t, testUserResource(g), userStateVals()).Diagnostics)
 }
 
 func TestDatabaseUserImport(t *testing.T) {
@@ -281,7 +281,7 @@ func TestDatabaseUserImport(t *testing.T) {
 	f.answer("GET "+usersPath, 200, userListJSON)
 	f.answer("GET "+userPath+"/password", 200, `{"username":"reporting","password":"`+generatedPwd+`"}`)
 
-	res := doImport(t, testUserResource(f), "i-1/reporting")
+	res := dsDoImport(t, testUserResource(f), "i-1/reporting")
 	failOn(t, res.Diagnostics)
 	var got databaseUserModel
 	failOn(t, res.State.Get(context.Background(), &got))
@@ -291,16 +291,16 @@ func TestDatabaseUserImport(t *testing.T) {
 	}
 
 	for _, bad := range []string{"i-1", "i-1/", "/reporting", "i-1/a/b"} {
-		wantError(t, doImport(t, testUserResource(f), bad).Diagnostics, "<instance_id>/<username>")
+		wantError(t, dsDoImport(t, testUserResource(f), bad).Diagnostics, "<instance_id>/<username>")
 	}
 
 	g := newFakeAPI(t)
 	g.answer("GET "+usersPath, 200, `{"users":[]}`)
-	wantError(t, doImport(t, testUserResource(g), "i-1/reporting").Diagnostics, "has no user \"reporting\"")
+	wantError(t, dsDoImport(t, testUserResource(g), "i-1/reporting").Diagnostics, "has no user \"reporting\"")
 }
 
 func TestDatabaseUserSchemaMirrorsTheAPI(t *testing.T) {
-	sch := resourceSchema(t, NewDatabaseUserResource())
+	sch := dsResourceSchema(t, NewDatabaseUserResource())
 	if !sch.Attributes["password"].IsSensitive() {
 		t.Error("password must be sensitive")
 	}
@@ -320,9 +320,9 @@ func TestDatabaseUserSchemaMirrorsTheAPI(t *testing.T) {
 // A generated password is kept until the rotation trigger changes.
 func TestGeneratedPasswordPlanning(t *testing.T) {
 	ctx := context.Background()
-	sch := resourceSchema(t, NewDatabaseUserResource())
+	sch := dsResourceSchema(t, NewDatabaseUserResource())
 	prior := userStateVals()
-	prior["rotation_trigger"] = str("2026-10")
+	prior["rotation_trigger"] = dsStr("2026-10")
 	state := tfsdk.State{Schema: sch, Raw: stored(t, sch, prior)}
 
 	for _, tc := range []struct {
@@ -330,7 +330,7 @@ func TestGeneratedPasswordPlanning(t *testing.T) {
 		wantUnknown bool
 	}{{"2026-10", false}, {"2026-11", true}} {
 		vals := userStateVals()
-		vals["rotation_trigger"] = str(tc.trigger)
+		vals["rotation_trigger"] = dsStr(tc.trigger)
 		vals["password"] = tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
 		plan := tfsdk.Plan{Schema: sch, Raw: planned(t, sch, vals)}
 		req := planmodifier.StringRequest{

@@ -13,7 +13,7 @@ func TestClientCertificatesRead(t *testing.T) {
 	f.answer("GET /instances/i-1/client-certificates", 200, `{"mode":"required",
 		"ca_certificates":[{"subject":"CN=Example Client CA","notAfter":"2027-10-25T00:00:00.000Z","fingerprint256":"AB:CD"}],
 		"ca_pem":`+jsonString(testCA)+`,"tls_enabled":true,"tls_only":true,"available":true}`)
-	res := readDataSource(t, &clientCertificatesDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": str("i-1")})
+	res := dsReadDataSource(t, &clientCertificatesDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": dsStr("i-1")})
 	failOn(t, res.Diagnostics)
 	var got clientCertificatesModel
 	failOn(t, res.State.Get(context.Background(), &got))
@@ -35,7 +35,7 @@ func TestClientCertificatesOffHasNoCA(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("GET /instances/i-1/client-certificates", 200,
 		`{"mode":"off","ca_certificates":[],"ca_pem":null,"tls_enabled":false,"tls_only":false,"available":false}`)
-	res := readDataSource(t, &clientCertificatesDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": str("i-1")})
+	res := dsReadDataSource(t, &clientCertificatesDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": dsStr("i-1")})
 	failOn(t, res.Diagnostics)
 	var got clientCertificatesModel
 	failOn(t, res.State.Get(context.Background(), &got))
@@ -47,12 +47,12 @@ func TestClientCertificatesOffHasNoCA(t *testing.T) {
 func TestClientCertificatesErrors(t *testing.T) {
 	f := newFakeAPI(t)
 	f.answer("GET /instances/i-1/client-certificates", 404, `{"error":{"code":"not_found"}}`)
-	res := readDataSource(t, &clientCertificatesDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": str("i-1")})
+	res := dsReadDataSource(t, &clientCertificatesDataSource{client: f.client()}, map[string]tftypes.Value{"instance_id": dsStr("i-1")})
 	wantError(t, res.Diagnostics, "No database with id i-1")
 
 	g := newFakeAPI(t)
 	g.answer("GET /instances/i-1/client-certificates", 403, `{"error":{"code":"forbidden","message":"Your role cannot read this."}}`)
-	res = readDataSource(t, &clientCertificatesDataSource{client: g.client()}, map[string]tftypes.Value{"instance_id": str("i-1")})
+	res = dsReadDataSource(t, &clientCertificatesDataSource{client: g.client()}, map[string]tftypes.Value{"instance_id": dsStr("i-1")})
 	wantError(t, res.Diagnostics, "Your role cannot read this.")
 }
 
