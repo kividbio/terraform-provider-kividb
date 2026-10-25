@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 (unreleased)
+## 0.6.0 (October 25, 2026)
 
 Most of what KiviDB Cloud has gained since 0.5.0 can now be managed from
 Terraform: database users and network access, backups to your own bucket,
