@@ -1,0 +1,98 @@
+---
+page_title: "kividb_export_destination Resource"
+subcategory: ""
+description: |-
+  An S3 bucket in your own AWS account that KDB exports are delivered to.
+---
+
+# kividb_export_destination (Resource)
+
+An S3 bucket in your own AWS account that KDB exports are delivered to. KiviDB
+writes into it by assuming a role you create, presenting an external id unique
+to this destination. The export stays in KiviDB's storage as well; a copy lands
+in your bucket.
+
+{{ tffile "examples/resources/kividb_export_destination/resource.tf" }}
+
+## The three steps
+
+1. **This resource** registers the bucket. KiviDB mints the destination's
+   external id and answers with the role's `trust_policy` and
+   `permission_policy`, already filled in for this destination.
+2. **The role**, in your account, named `role_name`, with `trust_policy` as its
+   trust policy and `permission_policy` attached. The example above builds it
+   with the `hashicorp/aws` provider.
+3. **[`kividb_export_destination_verification`](export_destination_verification.md)**
+   has KiviDB assume the role, find the bucket and write a test file. Until that
+   passes, nothing is delivered and no database can be pointed at the
+   destination.
+
+Creating the destination does not verify it, because it cannot: the role's
+trust policy names the external id, which only exists once the destination
+does. Verifying inside this resource would fail on every first apply.
+
+## What the role needs
+
+The trust policy lets KiviDB's API role (which verifies) and worker role (which
+delivers) assume the role, and only with this destination's external id:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": { "AWS": ["<KiviDB's API role>", "<KiviDB's worker role>"] },
+      "Action": "sts:AssumeRole",
+      "Condition": { "StringEquals": { "sts:ExternalId": "<external_id>" } }
+    }
+  ]
+}
+```
+
+The permission policy lets it write and complete uploads under the prefix, and
+read where the bucket is:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"],
+      "Resource": "arn:aws:s3:::<bucket>/<prefix>*"
+    },
+    { "Effect": "Allow", "Action": ["s3:GetBucketLocation"], "Resource": "arn:aws:s3:::<bucket>" }
+  ]
+}
+```
+
+Use `trust_policy` and `permission_policy` rather than copying these: they carry
+the real principals and external id. If the bucket is encrypted with a KMS key
+of your own, the role also needs `kms:GenerateDataKey` on that key. No bucket
+policy is needed, since the role is a principal of your own account. The role
+cannot read, list or delete anything in the bucket.
+
+Verification checks, in order: that the role can be assumed with the external
+id (`assume_role`), that it answers from `aws_account_id` (`session_account`),
+that the bucket exists and is owned by that account (`bucket`), and that a file
+can be written at `<prefix>.kividb-verify` (`write`).
+
+## Changing it replaces it
+
+The API has no way to change a destination, so every argument forces a new one,
+with a new external id. The role's trust policy follows when it is built from
+`trust_policy`, and the verification and any `kividb_instance_export` pointing
+here are replaced in turn. Destroying a destination stops deliveries to it:
+databases that used it lose their destination, and their schedules are turned
+off.
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}
