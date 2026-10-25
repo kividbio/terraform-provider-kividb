@@ -1,0 +1,111 @@
+---
+page_title: "kividb_data_pipeline Resource"
+subcategory: ""
+description: |-
+  A data integration pipeline: change data capture from PostgreSQL or MySQL into a KiviDB database.
+---
+
+# kividb_data_pipeline (Resource)
+
+A data integration pipeline copies tables from your PostgreSQL or MySQL
+database into a KiviDB database, first as a snapshot and then change by
+change, so the KiviDB copy stays seconds behind the source. Each row becomes
+one key — a hash, or a JSON document — named by a template such as
+`customer:{id}`.
+
+{{ tffile "examples/resources/kividb_data_pipeline/resource.tf" }}
+
+## What it costs
+
+A pipeline is billed while it runs: **$0.04 for every hour, or part of an
+hour**, in which it runs, plus **$0.10 per GB** it writes into the database
+beyond 10 GB a month. The target database is billed as usual.
+
+Starting a pipeline needs enough credit in the organization to cover about a
+month of it ($29.20) on top of what is already running. When there is not
+enough, the create — or setting `enabled = true` — is refused with the
+shortfall in the API's words, and nothing starts. Organizations whose
+databases are not charged are not gated.
+
+## What the source needs
+
+KiviDB connects to the source from its own network, so `source_host` must
+resolve to a public address; private, loopback and other reserved addresses
+are refused. Every table needs a primary key.
+
+- **PostgreSQL** (logical replication): `wal_level = logical`, and a user with
+  `REPLICATION` — on Amazon RDS, the `rds_replication` role, with
+  `rds.logical_replication = 1` in the parameter group — that owns the tables
+  or may create a publication for them. The pipeline makes one replication
+  slot and one publication in the source, both named `kividb_…`.
+- **MySQL** 5.7, 8.0, 8.4 or MariaDB (the binary log): `log_bin` on,
+  `binlog_format = ROW`, `binlog_row_image = FULL`, and a user with
+  `REPLICATION SLAVE`, `REPLICATION CLIENT` and `SELECT` on the tables.
+
+Before saving a create or a change, the API connects with the settings given
+and reads one row of each table. A typo, a wrong password or a source not set
+up for replication fails the apply there, with the source's own message, and
+nothing is saved.
+
+Key templates should use the primary key's columns: a delete carries only
+those, unless a PostgreSQL table has `REPLICA IDENTITY FULL`.
+
+## Starting and stopping
+
+A pipeline is created running; the API has no way to create one stopped. With
+`enabled = false` the provider stops it straight after the create, so it is
+charged for that first hour and may have started copying.
+
+`enabled = false` stops a pipeline without deleting it, and the hourly charge
+stops with it. A stopped **PostgreSQL** pipeline keeps its replication slot in
+the source, and the source keeps its WAL for us until the pipeline is started
+again or deleted. Leave one stopped for long and the source's disk fills.
+
+`enabled = true` starts a stopped pipeline, and retries one that failed. A
+pipeline stopped in the console shows as a change on the next plan.
+
+## Changing a pipeline
+
+The source's host, port, database, user, password, TLS mode and the tables
+change in place; each change is checked against the source first. Changing
+the tables copies every table again from the start, then carries on streaming.
+To copy everything again without changing anything, change
+`resnapshot_trigger` to any new value.
+
+`name`, `instance_id` and `source_type` cannot change. Changing one replaces
+the pipeline: the old one is deleted (and its replication slot dropped) and a
+new one copies every table again.
+
+## The password
+
+The API stores `source_password` encrypted and never returns it. Terraform
+keeps the value you configured in state, so treat the state as sensitive. A
+password changed in the console is not seen by Terraform, and an apply that
+changes any other source setting sends the configured password again.
+
+## Deleting
+
+Destroy stops the pipeline, waits for it to let go (up to 30 seconds), and
+drops the replication slot and publication it made in a PostgreSQL source.
+
+If the slot cannot be dropped — the source is unreachable, say — the destroy
+fails with the API's explanation and the pipeline stays, stopped. Fix the
+connection and destroy again, or set `force_delete = true`, apply, and destroy:
+the pipeline is then deleted anyway, the destroy warns which slot was left,
+and KiviDB keeps trying to drop it for about four days before telling the
+organization to drop it by hand. Until then the source keeps its WAL.
+`force_delete` is read from state, which is why it has to be applied before
+the destroy.
+
+Deleting the target database deletes its pipelines; the next plan creates the
+pipeline again.
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}
