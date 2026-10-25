@@ -129,6 +129,7 @@ func (p *kividbProvider) Resources(_ context.Context) []func() resource.Resource
 		NewContextModelResource,
 		NewContextAgentKeyResource,
 		NewDataPipelineResource,
+		NewCreditReservationResource,
 	}
 }
 
@@ -142,5 +143,6 @@ func (p *kividbProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewKdbSnapshotsDataSource,
 		NewDiskSnapshotsDataSource,
 		NewAuditLogSettingsDataSource,
+		NewCreditReservationsDataSource,
 	}
 }
