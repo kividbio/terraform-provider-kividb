@@ -1,0 +1,46 @@
+---
+page_title: "kividb_context_agent_key Resource"
+subcategory: ""
+description: |-
+  An agent key for a Context Retriever model.
+---
+
+# kividb_context_agent_key (Resource)
+
+An agent key for a [`kividb_context_model`](context_model.md): what an AI
+agent sends, as `Authorization: Bearer kvctx_...`, to call the model's tools
+over the Model Context Protocol at `mcp_url`.
+
+{{ tffile "examples/resources/kividb_context_agent_key/resource.tf" }}
+
+## The key is in state
+
+The API shows the key once, when it is made. The provider keeps it in state as
+the sensitive `key`, so anyone who can read the state can read the key. An
+imported key's `key` is null: the API cannot show it again.
+
+## Scope
+
+A key sees all of the model's entities unless `entities` limits it. `filters`
+adds fixed conditions to every query through the key, which the agent cannot
+remove: `{ customer = { tenant = "acme" } }` lets it see only acme's customers.
+Only `tag` and `numeric` fields, or the entity's `id_field`, can be filtered,
+and a numeric value is written as a string.
+
+## Nothing changes in place
+
+The API cannot change a key, so every change makes a new key and revokes the
+old one; an agent still holding the old key is refused from then on. Destroying
+the resource revokes the key. A key revoked in the console, or removed with its
+model, disappears from state on the next refresh, and the next apply makes a
+new one.
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}

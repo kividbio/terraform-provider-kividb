@@ -1,0 +1,55 @@
+---
+page_title: "kividb_context_model Resource"
+subcategory: ""
+description: |-
+  A Context Retriever model over the records in a database.
+---
+
+# kividb_context_model (Resource)
+
+A Context Retriever model: a description of the records already in a database
+that KiviDB turns into search indexes and into tools an AI agent calls over the
+Model Context Protocol, with a [`kividb_context_agent_key`](context_agent_key.md).
+
+{{ tffile "examples/resources/kividb_context_model/resource.tf" }}
+
+## Entities are nested attributes
+
+The model's entities, their fields and their relationships are written as
+nested attributes rather than as one `jsonencode()`d string. A plan then names
+what changed (`entities[1].fields[2].type`) instead of showing two blocks of
+JSON, the API's defaults (`storage`, `id_field`, `relationships`) appear as
+values rather than as a difference against what the server stored, and names,
+types and lengths are checked at plan time.
+
+A relationship's `entity` must be another entity of this model, and its `field`
+a `tag` or `numeric` field (or the `id_field`) of that entity. The API checks
+that when the model is saved, and refuses it, naming the relationship, if not.
+
+## Saving rebuilds the indexes
+
+Every apply that creates or changes the model rebuilds its search indexes in the
+database, which must be running. If the model is saved but the indexes cannot
+be built, the apply fails with the API's reason. On a create the model is kept
+in state, marked tainted, and replaced on the next apply.
+
+## Destroying
+
+Destroying the model deletes it, its search indexes and every agent key made
+for it, so agents using those keys are refused at once. The records the model
+described stay in the database. Changing `name` or `instance_id` replaces the
+model, with the same effect on its keys; the API does not move a model to
+another database.
+
+Context models are not available on sharded databases. An organization has at
+most 20.
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}
