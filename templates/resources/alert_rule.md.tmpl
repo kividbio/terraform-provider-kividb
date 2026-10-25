@@ -1,0 +1,60 @@
+---
+page_title: "kividb_alert_rule Resource"
+subcategory: ""
+description: |-
+  An alert: a condition on a database, or on the organization's credit, sent to alert channels.
+---
+
+# kividb_alert_rule (Resource)
+
+An alert: a condition on one database, or on the organization's credit, sent to
+one or more [`kividb_alert_channel`](alert_channel.md)s.
+
+{{ tffile "examples/resources/kividb_alert_rule/resource.tf" }}
+
+## Metrics
+
+| `metric`                  | About            | Unit    | Default condition |
+|---------------------------|------------------|---------|-------------------|
+| `memory_pct`              | a database       | %       | above 80          |
+| `ops_per_sec`             | a database       | ops/s   | above 10000       |
+| `latency_p99_ms`          | a database       | ms      | above 5           |
+| `connected_clients`       | a database       | clients | above 1000        |
+| `replication_lag_seconds` | a database       | s       | above 10          |
+| `failover`                | a database       | —       | a replica was promoted |
+| `credit_runway_days`      | the organization | days    | below 7           |
+
+Every metric except `credit_runway_days` needs `instance_id`;
+`credit_runway_days` must not have one. A `failover` alert fires on the event,
+so it takes no `op`, `threshold` or `for_minutes`.
+
+## When it is sent
+
+The condition has to hold for `for_minutes` before the alert fires. It is sent
+once when it fires, again every `cooldown_minutes` for as long as it keeps
+firing, and once more when it clears.
+
+Any change to an alert is applied in place and starts its condition over: an
+alert that was firing is treated as new, and sends no resolved notice for the
+condition it no longer has.
+
+## Limits
+
+An organization can have at most 100 alerts, each sending to at most 10
+channels. An API key limited to some databases cannot manage alerts at all,
+because an alert can name any database and send to any channel of the
+organization; use a key without database limits.
+
+Deleting the database an alert watches deletes the alert, and the next plan
+creates it again — for a database that no longer exists, which the API refuses
+until `instance_id` points somewhere real.
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}

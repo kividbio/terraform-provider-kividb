@@ -1,0 +1,74 @@
+---
+page_title: "kividb_alert_channel Resource"
+subcategory: ""
+description: |-
+  Where alerts are delivered: email to the organization's members, Slack, Microsoft Teams, PagerDuty or a signed webhook.
+---
+
+# kividb_alert_channel (Resource)
+
+Where alerts are delivered: email to the organization's members, a Slack or
+Microsoft Teams channel, a PagerDuty service, or a signed webhook. A
+[`kividb_alert_rule`](alert_rule.md) sends to one or more channels.
+
+{{ tffile "examples/resources/kividb_alert_channel/resource.tf" }}
+
+## Kinds
+
+| `kind`      | Takes                     | Delivers to |
+|-------------|---------------------------|-------------|
+| `email`     | `roles`                   | The organization's members with those roles (default owners and admins). Never an address you type, so an alert cannot be used to mail somebody outside the organization. |
+| `slack`     | `url`                     | A Slack incoming webhook, `https://hooks.slack.com/services/...`. |
+| `teams`     | `url`                     | A Teams Workflows webhook (`logic.azure.com`, `api.powerplatform.com`) or an Office 365 connector (`webhook.office.com`). |
+| `pagerduty` | `routing_key`, `region`   | An Events API v2 integration on a PagerDuty service, in the `us` or `eu` service region. |
+| `webhook`   | `url`                     | Any https URL on a public address, as a signed JSON POST. |
+
+An organization can have at most 20 channels.
+
+## A channel is replaced, never edited
+
+The API has no way to change a channel once it exists. Changing any argument
+plans a new channel and destroys the old one — and a channel that an alert
+still sends to cannot be destroyed (`channel_in_use`). Give every channel
+
+```hcl
+lifecycle {
+  create_before_destroy = true
+}
+```
+
+so Terraform creates the new channel, moves the alerts to it, and only then
+removes the old one.
+
+## Secrets
+
+`url` and `routing_key` are sensitive: whoever holds a Slack or Teams webhook
+URL can post to that channel, and whoever holds a PagerDuty integration key can
+open incidents. The API stores them sealed and never returns them; it shows
+`url_hint` (the URL's origin and the start of its path) or `key_hint` (the
+key's last four characters) instead.
+
+A webhook's `signing_secret` is shown once, by the request that creates the
+channel, and kept in Terraform state. Each delivery carries
+
+```
+X-KiviDB-Signature: t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<body>">
+```
+
+computed with it. State holding these values should be stored as a secret.
+
+## Testing a channel
+
+There is no Terraform action for the console's **Send test** button. A test is
+a notice sent now, not configuration, and the API allows one every 30 seconds
+per channel; send it from the console (Dashboard → Settings → Alerts).
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}
