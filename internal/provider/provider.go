@@ -120,6 +120,8 @@ func (p *kividbProvider) Resources(_ context.Context) []func() resource.Resource
 		NewExportDestinationVerificationResource,
 		NewInstanceExportResource,
 		NewKdbSnapshotResource,
+		NewAlertChannelResource,
+		NewAlertRuleResource,
 	}
 }
 
@@ -132,5 +134,6 @@ func (p *kividbProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewClientCertificatesDataSource,
 		NewKdbSnapshotsDataSource,
 		NewDiskSnapshotsDataSource,
+		NewAuditLogSettingsDataSource,
 	}
 }
