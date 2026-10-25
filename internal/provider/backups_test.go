@@ -201,6 +201,10 @@ func (f *fakeBackups) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if cadence != "off" && inst["free_tier"] == true {
+			send(422, map[string]any{"error": map[string]any{"code": "free_tier_no_scheduled_exports", "message": freeTierNoScheduledExports}})
+			return
+		}
 		if cadence != "off" && dest == nil {
 			send(422, map[string]any{"error": map[string]any{"code": "destination_required", "message": "Scheduled exports are delivered to a destination; choose one first."}})
 			return
@@ -757,17 +761,41 @@ func TestInstanceExportRefusalIsVerbatim(t *testing.T) {
 	}
 }
 
-func TestInstanceExportWarnsThatFreeTierHasNoSchedule(t *testing.T) {
+// A schedule on a free-tier database is refused: at plan when the database
+// exists, and by the API (in the same words) when it does not yet.
+func TestInstanceExportRefusesAScheduleOnTheFreeTier(t *testing.T) {
 	f, c := newFakeBackups(t)
 	f.addInstance(true)
 	f.addVerifiedDestination()
 	h := newHarness(t, configure(t, NewInstanceExportResource(), c))
-	_, d := h.create(map[string]tftypes.Value{
+	vals := map[string]tftypes.Value{
 		"instance_id": bkStr(bkInstanceID), "export_destination_id": bkStr(testDestID), "cadence": bkStr("daily"),
-	})
-	failOn(t, d)
-	if len(d.Warnings()) != 1 || !strings.Contains(d.Warnings()[0].Summary(), "free-tier") {
-		t.Errorf("a schedule on a free-tier database must warn that it will not run: %v", d.Warnings())
+	}
+
+	plan := h.plan(vals)
+	mp := resource.ModifyPlanResponse{Plan: plan}
+	h.r.(resource.ResourceWithModifyPlan).ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan: plan, State: h.empty(), Config: tfsdk.Config{Schema: h.sch, Raw: plan.Raw},
+	}, &mp)
+	if !strings.Contains(errorText(mp.Diagnostics), freeTierNoScheduledExports) {
+		t.Errorf("the plan must refuse the schedule in the API's words: %s", errorText(mp.Diagnostics))
+	}
+
+	// Turning exports off, or on demand only, is allowed.
+	off := map[string]tftypes.Value{"instance_id": bkStr(bkInstanceID), "export_destination_id": bkStr(testDestID), "cadence": bkStr("off")}
+	offPlan := h.plan(off)
+	mp = resource.ModifyPlanResponse{Plan: offPlan}
+	h.r.(resource.ResourceWithModifyPlan).ModifyPlan(context.Background(), resource.ModifyPlanRequest{
+		Plan: offPlan, State: h.empty(), Config: tfsdk.Config{Schema: h.sch, Raw: offPlan.Raw},
+	}, &mp)
+	failOn(t, mp.Diagnostics)
+
+	state, d := h.create(vals)
+	if !strings.Contains(errorText(d), freeTierNoScheduledExports) {
+		t.Errorf("the API's refusal must be shown as written: %s", errorText(d))
+	}
+	if !state.Raw.IsNull() {
+		t.Error("a refused create must record nothing")
 	}
 }
 

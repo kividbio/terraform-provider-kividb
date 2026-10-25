@@ -281,6 +281,8 @@ func TestInstanceConfigValidation(t *testing.T) {
 		{"client certs without TLS", with(paid(), "client_cert_mode", dsStr("optional"), "client_ca_pem", dsStr(testCA), "tls_enabled", dsBoolean(false)), "client_cert_mode"},
 		{"required without tls_only", with(paid(), "client_cert_mode", dsStr("required"), "client_ca_pem", dsStr(testCA)), "client_cert_mode"},
 		{"required with tls_only", with(paid(), "client_cert_mode", dsStr("required"), "client_ca_pem", dsStr(testCA), "tls_only", dsBoolean(true)), ""},
+		{"tls_only without TLS", with(paid(), "tls_only", dsBoolean(true), "tls_enabled", dsBoolean(false)), "tls_only"},
+		{"tls_only with TLS", with(paid(), "tls_only", dsBoolean(true)), ""},
 		{"a CA with certs off", with(paid(), "client_ca_pem", dsStr(testCA)), "client_ca_pem"},
 		// Unknown at plan time is checked by the API at apply instead.
 		{"unknown TLS", with(paid(), "replication_tls", dsBoolean(true), "tls_enabled", tftypes.NewValue(tftypes.Bool, tftypes.UnknownValue)), ""},

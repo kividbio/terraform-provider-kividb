@@ -116,6 +116,8 @@ func (p *kividbProvider) Resources(_ context.Context) []func() resource.Resource
 		NewDatabaseUserResource,
 		NewMaintenanceWindowResource,
 		NewSnapshotScheduleResource,
+		NewInstanceNetworkResource,
+		NewPrivateLinkResource,
 		NewExportDestinationResource,
 		NewExportDestinationVerificationResource,
 		NewInstanceExportResource,

@@ -99,7 +99,8 @@ where the API has an operation for it:
 | ` + "`replica_count`" + ` | scaled in place, 1-3 |
 | ` + "`tier`" + ` | upgraded in place |
 | ` + "`kividb_version`, `lua_enabled`, `tls_enabled`, `replication_tls`, `client_cert_mode`, `client_ca_pem`" + ` | applied by a rolling restart |
-| ` + "`cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only`, `free_tier`, `shard_count`" + ` | **replaces the database** |
+| ` + "`tls_only`" + ` | changed in place, without a restart |
+| ` + "`cloud`, `region`, `cloud_account_id`, `aof_enabled`, `free_tier`, `shard_count`" + ` | **replaces the database** |
 | ` + "`restore_from_snapshot_id`, `restore_from_kdb_snapshot_id`" + ` | **replaces the database** when changed to a different snapshot |
 
 The last rows are the important ones. There is no operation that moves a
@@ -236,12 +237,15 @@ is running, by a second restart a minute or two after it is created.`,
 					"refused at plan. **Changing this replaces the database.**",
 				PlanModifiers: []planmodifier.Bool{aofFollowsTier(), boolplanmodifier.RequiresReplace()},
 			},
+			// Changed in place through the network route, which is where the API
+			// keeps it: TLS-only is which port the allowlist is open on, so it
+			// takes effect when the firewall is written, with no restart.
 			"tls_only": schema.BoolAttribute{
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(false),
-				MarkdownDescription: "Refuse plaintext connections. **Changing this replaces the database.**",
-				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(false),
+				MarkdownDescription: "Refuse plaintext connections: the allowlist is open on the TLS port (6380) " +
+					"only. Needs `tls_enabled`. Changed in place, without a restart.",
 			},
 
 			"wait_for_ready": schema.BoolAttribute{
@@ -628,6 +632,28 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		return true
 	}
 
+	// settledWith waits for an engine change to land, not only for the status to
+	// come back: the network route reads tls_enabled from the database row, and
+	// TLS-only is refused until the change that turns TLS on is in it.
+	settledWith := func(br BinaryRequest) bool {
+		want := func(i *Instance) error {
+			if br.TLSEnabled != nil && i.TLSEnabled != *br.TLSEnabled {
+				return fmt.Errorf("tls_enabled is still %t, not %t", i.TLSEnabled, *br.TLSEnabled)
+			}
+			if br.ClientCertMode != nil && i.clientCertMode() != *br.ClientCertMode {
+				return fmt.Errorf("client_cert_mode is still %s, not %s", i.clientCertMode(), *br.ClientCertMode)
+			}
+			return nil
+		}
+		if _, err := r.settleUntil(ctx, id, true, want); err != nil {
+			res.Diagnostics.AddError("The database did not settle between changes",
+				"An earlier part of this change was applied and the database did not come back to rest, "+
+					"so the rest was not attempted: "+explain(err))
+			return false
+		}
+		return true
+	}
+
 	if !plan.Name.Equal(state.Name) && !plan.Name.IsUnknown() {
 		if err := r.client.Rename(ctx, id, plan.Name.ValueString()); err != nil {
 			res.Diagnostics.AddError("Could not rename the database", explain(err))
@@ -718,6 +744,39 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		didSomething = true
 	}
 
+	/*
+	 * TLS-only, and the engine change it is tangled with.
+	 *
+	 * tls_only is set through the network route, which refuses it while the
+	 * database has no TLS, and refuses turning it off while client certificates
+	 * are required. The engine change, for its part, refuses requiring client
+	 * certificates while the database is not TLS-only. So the order matters:
+	 * TLS-only goes first when the database already allows it, otherwise
+	 * between two engine changes -- the first bringing TLS up (or relaxing client
+	 * certificates), the second carrying whatever needed TLS-only to be in
+	 * place.
+	 */
+	tlsOnlyChanged := !plan.TLSOnly.Equal(state.TLSOnly) && !plan.TLSOnly.IsUnknown()
+	wantTLSOnly := plan.TLSOnly.ValueBool()
+	setTLSOnly := func() bool {
+		if _, err := r.client.SetTLSOnly(ctx, id, wantTLSOnly); err != nil {
+			res.Diagnostics.AddError("Could not change tls_only", explainNetwork(err))
+			return false
+		}
+		didSomething = true
+		tlsOnlyChanged = false
+		return true
+	}
+	if tlsOnlyChanged {
+		canNow := (wantTLSOnly && state.TLSEnabled.ValueBool()) ||
+			(!wantTLSOnly && state.ClientCertMode.ValueString() != "required")
+		if canNow {
+			if !settled() || !setTLSOnly() {
+				return
+			}
+		}
+	}
+
 	// Version, Lua and TLS travel together: one restart applies all three, so
 	// sending them separately would restart the database up to three times.
 	if !plan.KividbVersion.Equal(state.KividbVersion) ||
@@ -747,11 +806,46 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 			br.TLSEnabled = boolPtr(plan.TLSEnabled)
 		}
 		br.binarySettingsFields = nodeSecurityRequest(&plan, &state)
+
+		// What has to wait for TLS-only to change first.
+		var later BinaryRequest
+		if tlsOnlyChanged && wantTLSOnly && br.ClientCertMode != nil && *br.ClientCertMode == "required" {
+			later = BinaryRequest{KividbVersion: version}
+			later.ClientCertMode, later.ClientCaPem = br.ClientCertMode, br.ClientCaPem
+			br.ClientCertMode, br.ClientCaPem = nil, nil
+		}
+		if tlsOnlyChanged && !wantTLSOnly && br.TLSEnabled != nil && !*br.TLSEnabled {
+			later = BinaryRequest{KividbVersion: version, TLSEnabled: br.TLSEnabled}
+			br.TLSEnabled = nil
+		}
+
 		if !settled() {
 			return
 		}
 		if err := r.client.UpgradeBinary(ctx, id, br); err != nil {
 			res.Diagnostics.AddError("Could not apply the engine change", explain(err))
+			return
+		}
+		didSomething = true
+
+		if tlsOnlyChanged {
+			if !settledWith(br) || !setTLSOnly() {
+				return
+			}
+		}
+		if later != (BinaryRequest{}) {
+			if !settled() {
+				return
+			}
+			if err := r.client.UpgradeBinary(ctx, id, later); err != nil {
+				res.Diagnostics.AddError("Could not apply the engine change", explain(err))
+				return
+			}
+		}
+	}
+	if tlsOnlyChanged {
+		// Nothing above could make it possible; the network route explains why.
+		if !settled() || !setTLSOnly() {
 			return
 		}
 	}
@@ -954,6 +1048,12 @@ func wantedBy(plan, state *instanceModel) func(*Instance) error {
 		})
 	}
 
+	if !plan.TLSOnly.Equal(state.TLSOnly) && !plan.TLSOnly.IsUnknown() {
+		expected = append(expected, expectation{
+			"tls_only", strconv.FormatBool(plan.TLSOnly.ValueBool()),
+			func(i *Instance) string { return strconv.FormatBool(i.TLSOnly) },
+		})
+	}
 	for _, e := range nodeSecurityExpectations(plan, state) {
 		expected = append(expected, e)
 	}

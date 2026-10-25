@@ -31,9 +31,10 @@ schedule needs a destination. KiviDB keeps its own copy of a scheduled export
 for 7 days; the one in your bucket is yours to keep or expire.
 
 Scheduled exports run only on a running, single-shard, paid database. A
-free-tier database accepts the setting but never exports on a schedule, and the
-apply warns about it; an export taken on demand is still delivered. The API
-refuses an export configuration for a sharded database.
+schedule on a free-tier database is refused: at plan when the database already
+exists, otherwise by the API at apply, in the same words. A destination with
+`cadence = "off"` is accepted there, and an export taken on demand is still
+delivered. The API refuses an export configuration for a sharded database.
 
 {{ .SchemaMarkdown | trimspace }}
 

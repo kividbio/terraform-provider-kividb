@@ -6,10 +6,9 @@
 #      databases: a limited key cannot reach export destinations at all)
 #   2. AWS credentials for the account the bucket goes in, allowed to create a
 #      bucket, an IAM role and a role policy.
-#   3. The id of the database to export. A free-tier database cannot be created
-#      by Terraform (they are one per person, made in the console), so this
-#      takes one that exists. Exports on demand work on a free-tier database on
-#      AWS; scheduled exports do not run on one.
+#   3. The id of the database to export, one that already exists. Exports on
+#      demand work on a free-tier database on AWS; a schedule on one is
+#      refused.
 
 terraform {
   required_providers {
@@ -113,7 +112,7 @@ resource "kividb_instance_export" "db" {
   instance_id           = data.kividb_instance.db.id
   export_destination_id = kividb_export_destination_verification.this.id
   # "daily" or "weekly" exports on a schedule -- but not on a free-tier
-  # database, where a schedule is saved and never runs (the plan warns).
+  # database, where the plan refuses a schedule.
   cadence = "off"
 }
 

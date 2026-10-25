@@ -84,6 +84,13 @@ func (r *instanceResource) ValidateConfig(ctx context.Context, req resource.Vali
 		}
 	}
 
+	// The API refuses TLS-only without TLS at create and on the network route
+	// alike: the allowlist would be open on a port nothing listens on.
+	if isTrue(cfg.TLSOnly) && isFalse(cfg.TLSEnabled) {
+		res.Diagnostics.AddAttributeError(path.Root("tls_only"), "TLS-only needs TLS",
+			"Enable TLS on this instance before requiring TLS-only connections: set `tls_enabled = true` as well.")
+	}
+
 	// Encrypted replication uses the database's TLS certificate.
 	if isTrue(cfg.ReplicationTLS) {
 		if isFalse(cfg.TLSEnabled) {

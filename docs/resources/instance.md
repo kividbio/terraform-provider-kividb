@@ -58,7 +58,8 @@ resource "kividb_instance" "gcp_primary" {
 | `replica_count` | scaled in place, between 1 and 3 |
 | `tier` | upgraded in place |
 | `kividb_version`, `lua_enabled`, `tls_enabled`, `replication_tls`, `client_cert_mode`, `client_ca_pem` | applied by a rolling restart |
-| `cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only`, `free_tier`, `shard_count` | **replaces the database** |
+| `tls_only` | changed in place, without a restart |
+| `cloud`, `region`, `cloud_account_id`, `aof_enabled`, `free_tier`, `shard_count` | **replaces the database** |
 | `restore_from_snapshot_id`, `restore_from_kdb_snapshot_id` | **replaces the database** when changed to a different snapshot |
 
 The last rows are the ones to read carefully. Nothing moves a database between
@@ -262,6 +263,24 @@ endings do not plan a change. Read the CA's expiry with the
 [`kividb_client_certificates`](../data-sources/client_certificates.md) data
 source.
 
+## TLS-only
+
+`tls_only = true` refuses plaintext connections: the allowlist is open on the
+TLS port, 6380, and not on 6379. It needs `tls_enabled`, and it changes in
+place with no restart, because it is a firewall setting rather than an engine
+one.
+
+It is ordered against the engine settings it depends on. Turning TLS on,
+TLS-only on and `client_cert_mode = "required"` in one apply restarts the
+database with TLS, then makes it TLS-only, then restarts it again to require
+client certificates, since each step is refused before the one it rests on.
+Going back the other way is ordered in reverse.
+
+The allowlist itself is managed by
+[`kividb_instance_network`](instance_network.md), and closing public access
+altogether by [`kividb_private_link`](private_link.md). The three write
+through the same API endpoint, and each changes only its own setting.
+
 ## Shards
 
 `shard_count` above 1 makes a sharded database: `data_size_gb` and
@@ -353,7 +372,7 @@ race its own teardown.
 - `shard_count` (Number) Shards. `1` is an ordinary database. Above 1, `data_size_gb` and `replica_count` are per shard. Sharded databases are not generally available yet: where they are not offered, the API refuses one and says so. **Changing this replaces the database.**
 - `throughput_mode` (String) `standard` or `high`. Changed in place.
 - `tls_enabled` (Boolean) Serve TLS alongside plaintext. Applied by a rolling restart.
-- `tls_only` (Boolean) Refuse plaintext connections. **Changing this replaces the database.**
+- `tls_only` (Boolean) Refuse plaintext connections: the allowlist is open on the TLS port (6380) only. Needs `tls_enabled`. Changed in place, without a restart.
 - `wait_for_ready` (Boolean) Wait for the database to finish provisioning before the apply completes. On by default, because anything that depends on `endpoint` needs one that answers. Set to `false` to return as soon as the work is accepted. A new database that sets `replication_tls` or `client_cert_mode` is waited for regardless: those are applied once it runs.
 
 ### Read-Only

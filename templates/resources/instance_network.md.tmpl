@@ -1,0 +1,22 @@
+---
+page_title: "kividb_instance_network Resource"
+subcategory: ""
+description: |-
+  Which addresses may connect to a database over its public endpoint.
+---
+
+# kividb_instance_network (Resource)
+
+{{ .Description | trimspace }}
+
+{{ tffile "examples/resources/kividb_instance_network/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}

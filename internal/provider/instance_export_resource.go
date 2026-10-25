@@ -20,7 +20,14 @@ var (
 	_ resource.ResourceWithConfigure      = (*instanceExportResource)(nil)
 	_ resource.ResourceWithImportState    = (*instanceExportResource)(nil)
 	_ resource.ResourceWithValidateConfig = (*instanceExportResource)(nil)
+	_ resource.ResourceWithModifyPlan     = (*instanceExportResource)(nil)
 )
+
+// The API's refusal of a schedule on a free-tier database
+// (free_tier_no_scheduled_exports), word for word, so the plan and the apply
+// say the same thing.
+const freeTierNoScheduledExports = "Scheduled exports are not available on a free-tier database. " +
+	"Export on demand, or upgrade the database."
 
 func NewInstanceExportResource() resource.Resource { return &instanceExportResource{} }
 
@@ -73,8 +80,9 @@ func (r *instanceExportResource) Schema(_ context.Context, _ resource.SchemaRequ
 				Default:  stringdefault.StaticString("off"),
 				MarkdownDescription: "How often the database exports on its own: `off`, `daily` or `weekly`. Defaults " +
 					"to `off`. A schedule needs `export_destination_id`. KiviDB keeps its own copy of a " +
-					"scheduled export for 7 days, since the bucket holds yours. Scheduled exports do not run " +
-					"on free-tier databases, or on sharded ones.",
+					"scheduled export for 7 days, since the bucket holds yours. A schedule on a free-tier " +
+					"database is refused (at plan, when the database already exists); scheduled exports do " +
+					"not run on sharded ones.",
 				Validators: []validator.String{stringvalidator.OneOf(kdbExportCadences...)},
 			},
 		},
@@ -127,12 +135,33 @@ func (r *instanceExportResource) set(ctx context.Context, plan *instanceExportMo
 	plan.ID = types.StringValue(inst.ID)
 	plan.Cadence = types.StringValue(inst.KdbExportCadence)
 	plan.ExportDestinationID = keepIDCase(plan.ExportDestinationID, inst.ExportDestinationID)
-	if inst.FreeTier && inst.KdbExportCadence != "off" {
-		res.AddWarning("Scheduled exports do not run on a free-tier database",
-			"The schedule is saved, but KiviDB does not export free-tier databases on a schedule. "+
-				"An export taken with kividb_kdb_snapshot is still delivered to the destination.")
-	}
 	return true
+}
+
+// ModifyPlan refuses a schedule on a free-tier database at plan, the way the
+// API refuses it at apply. It needs the database to exist already: for one
+// created in the same apply the id is unknown here, and the API's refusal,
+// with the same words, is what the practitioner sees instead.
+func (r *instanceExportResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, res *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() || r.client == nil {
+		return
+	}
+	var plan instanceExportModel
+	res.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if res.Diagnostics.HasError() || plan.InstanceID.IsUnknown() || plan.Cadence.IsUnknown() {
+		return
+	}
+	if c := plan.Cadence.ValueString(); c == "" || c == "off" {
+		return
+	}
+	inst, err := r.client.GetInstanceExport(ctx, plan.InstanceID.ValueString())
+	if err != nil {
+		return // not a reason to fail a plan; the API holds the same rule at apply
+	}
+	if inst.FreeTier {
+		res.Diagnostics.AddAttributeError(path.Root("cadence"), "Scheduled exports are not available on a free-tier database",
+			freeTierNoScheduledExports)
+	}
 }
 
 // diagnosticsHolder is the part of a response set() writes to, so Create and
