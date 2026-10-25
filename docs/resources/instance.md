@@ -57,14 +57,15 @@ resource "kividb_instance" "gcp_primary" {
 | `data_size_gb`, `throughput_mode` | resized in place |
 | `replica_count` | scaled in place, between 1 and 3 |
 | `tier` | upgraded in place |
-| `kividb_version`, `lua_enabled`, `tls_enabled` | applied by a rolling restart |
-| `cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only` | **replaces the database** |
+| `kividb_version`, `lua_enabled`, `tls_enabled`, `replication_tls`, `client_cert_mode`, `client_ca_pem` | applied by a rolling restart |
+| `tls_only` | changed in place, without a restart |
+| `cloud`, `region`, `cloud_account_id`, `aof_enabled`, `free_tier`, `shard_count` | **replaces the database** |
 | `restore_from_snapshot_id`, `restore_from_kdb_snapshot_id` | **replaces the database** when changed to a different snapshot |
 
-The last row is the one to read carefully. Nothing moves a database between
-clouds or regions, and append-only persistence is chosen when the volume is laid
-out rather than afterwards. Terraform will do exactly what you asked — destroy
-the old database and create a new, empty one.
+The last rows are the ones to read carefully. Nothing moves a database between
+clouds or regions, or between the free tier and a paid one, or changes how many
+shards it has. Terraform will do exactly what you asked — destroy the old
+database and create a new, empty one.
 
 ```
   # kividb_instance.cache must be replaced
@@ -186,6 +187,107 @@ nothing is restored. To create a database again from a snapshot, use
 To move data between clouds or accounts, export it from the source database and
 import it into the target.
 
+## The free tier
+
+Set `free_tier = true` for the free database. It is one per organization owner,
+across every organization they own, on AWS only, in `us-east-1`,
+`eu-central-1`, `ap-south-1`, `ap-northeast-1` or `af-south-1`:
+
+```terraform
+resource "kividb_instance" "sandbox" {
+  name         = "sandbox"
+  tier         = "essentials"
+  cloud        = "aws"
+  region       = "eu-central-1"
+  data_size_gb = 1
+  free_tier    = true
+}
+```
+
+A free database is always an Essentials database of 1 GB, without replicas,
+Lua, TLS or append-only persistence, on a host it shares with other free
+databases. The API builds it that way whatever it is sent, so the plan refuses
+any other value for those attributes instead of creating something the
+configuration does not describe. Upgrading it to a paid database is done in the
+console; in Terraform, changing `free_tier` replaces it.
+
+## Append-only persistence
+
+Every paid database keeps an append-only file, and the free tier does not: the
+API decides, from the tier. Leave `aof_enabled` unset and the plan shows what
+the database will have. Setting it to the other value is refused at plan,
+because the API would ignore it.
+
+## Encryption between nodes, and client certificates
+
+`replication_tls = true` encrypts replication between a database's own nodes
+with its TLS certificate, so a replica's copy of the data never crosses the
+network in plaintext.
+
+`client_cert_mode` asks clients on the TLS port for a certificate signed by
+the CA in `client_ca_pem` (mutual TLS):
+
+| `client_cert_mode` | A client without a certificate |
+|---|---|
+| `off` | connects (with its password) |
+| `optional` | connects; a certificate it does offer must be valid |
+| `required` | is refused |
+
+```terraform
+resource "kividb_instance" "payments" {
+  name             = "payments"
+  tier             = "pro"
+  cloud            = "aws"
+  region           = "eu-central-1"
+  data_size_gb     = 8
+  replica_count    = 1
+  tls_enabled      = true
+  tls_only         = true
+  replication_tls  = true
+  client_cert_mode = "required"
+  client_ca_pem    = file("${path.module}/client-ca.pem")
+}
+```
+
+Both need `tls_enabled`. `required` also needs `tls_only`, or a client could
+use the plaintext port to connect without a certificate. Neither is available
+on a sharded database yet. The plan refuses each of these combinations.
+
+They are applied by the same rolling restart as an engine change, together with
+any change to `kividb_version`, `lua_enabled` or `tls_enabled` in the same
+apply. The API does not take them when a database is created, so a new database
+that sets them is created first and then restarted with them once it is
+running; the apply waits for both. The CA bundle is kept as you wrote it: the
+API stores only its certificates, and the same certificates with different line
+endings do not plan a change. Read the CA's expiry with the
+[`kividb_client_certificates`](../data-sources/client_certificates.md) data
+source.
+
+## TLS-only
+
+`tls_only = true` refuses plaintext connections: the allowlist is open on the
+TLS port, 6380, and not on 6379. It needs `tls_enabled`, and it changes in
+place with no restart, because it is a firewall setting rather than an engine
+one.
+
+It is ordered against the engine settings it depends on. Turning TLS on,
+TLS-only on and `client_cert_mode = "required"` in one apply restarts the
+database with TLS, then makes it TLS-only, then restarts it again to require
+client certificates, since each step is refused before the one it rests on.
+Going back the other way is ordered in reverse.
+
+The allowlist itself is managed by
+[`kividb_instance_network`](instance_network.md), and closing public access
+altogether by [`kividb_private_link`](private_link.md). The three write
+through the same API endpoint, and each changes only its own setting.
+
+## Shards
+
+`shard_count` above 1 makes a sharded database: `data_size_gb` and
+`replica_count` are then per shard. Sharded databases are not offered
+everywhere yet; where they are not, the API refuses one with a message saying
+so. Changing `shard_count` replaces the database.
+
 ## Pro has a minimum size, and it differs by cloud
 
 | Cloud | Pro minimum |
@@ -255,18 +357,23 @@ race its own teardown.
 
 ### Optional
 
-- `aof_enabled` (Boolean) Append-only persistence. **Changing this replaces the database**: it is chosen when the volume is laid out and there is no operation to change it after.
+- `aof_enabled` (Boolean) Append-only persistence. Always on for a paid database and off for the free tier: the API decides it, so leave it unset. Setting it to the other value is refused at plan. **Changing this replaces the database.**
+- `client_ca_pem` (String) The CA certificate, or a bundle of up to 10, that signs your client certificates, in PEM. Each must be a CA certificate valid today; a private key is refused. Set it only with `client_cert_mode` `optional` or `required`: the API discards it when the mode is `off`.
+- `client_cert_mode` (String) Client certificates (mutual TLS) on the TLS port: `off`, `optional` (checked when a client offers one) or `required` (a client without one is refused). Anything but `off` needs `tls_enabled` and `client_ca_pem`; `required` also needs `tls_only`. Applied by a rolling restart.
 - `cloud_account_id` (String) Run the database in your own cloud account: the id of an account connected in the KiviDB console (see the `kividb_cloud_account` data source). Omit it to run the database in KiviDB's cloud. Available on AWS, Azure and Google Cloud (set `cloud` to the account's cloud). The account must be verified and have the database's region enabled. With `restore_from_snapshot_id` or `restore_from_kdb_snapshot_id`, omitting it places the database in the snapshot's account, and setting it to any other account is refused. **Changing this to a different account replaces the database.** Removing it from the configuration of a database that exists does not move the database: it stays in the account it is in.
+- `free_tier` (Boolean) Create the free database: AWS only, 1 GB, Essentials, no replicas. One per organization owner, across every organization they own. See "The free tier" above for what it fixes. **Changing this replaces the database.**
 - `kividb_version` (String) Engine version, e.g. `1.0.4`. Applied by a rolling restart.
 - `lua_enabled` (Boolean) Lua scripting. Applied by a rolling restart.
 - `name` (String) Hostname-safe name, unique across KiviDB. Generated if omitted; changing it renames the database in place.
 - `replica_count` (Number) Read replicas. `0` at creation for a single node; scaling afterwards accepts 1-3. Going back to `0` is not a scaling operation and is refused -- see the error for what to do instead.
+- `replication_tls` (Boolean) Encrypt replication between this database's nodes, using its TLS certificate. Needs `tls_enabled`; not available on sharded databases, which already encrypt traffic between their nodes when TLS is on. Applied by a rolling restart.
 - `restore_from_kdb_snapshot_id` (String) Create the database seeded from this KDB snapshot (a `.kdb` export). Same rule as `restore_from_snapshot_id`: the snapshot's cloud, region and cloud account only. Read only when the database is created. **Changing it to a different snapshot replaces the database**; removing it, or adding it to a database that already exists, changes nothing.
 - `restore_from_snapshot_id` (String) Create the database from this disk snapshot (see `kividb_disk_snapshot`). The database must be in the snapshot's cloud, region and cloud account, and at least as large as the snapshot needs; the API refuses anything else. Read only when the database is created. **Changing it to a different snapshot replaces the database**; removing it, or adding it to a database that already exists, changes nothing.
+- `shard_count` (Number) Shards. `1` is an ordinary database. Above 1, `data_size_gb` and `replica_count` are per shard. Sharded databases are not generally available yet: where they are not offered, the API refuses one and says so. **Changing this replaces the database.**
 - `throughput_mode` (String) `standard` or `high`. Changed in place.
 - `tls_enabled` (Boolean) Serve TLS alongside plaintext. Applied by a rolling restart.
-- `tls_only` (Boolean) Refuse plaintext connections. **Changing this replaces the database.**
-- `wait_for_ready` (Boolean) Wait for the database to finish provisioning before the apply completes. On by default, because anything that depends on `endpoint` needs one that answers. Set to `false` to return as soon as the work is accepted.
+- `tls_only` (Boolean) Refuse plaintext connections: the allowlist is open on the TLS port (6380) only. Needs `tls_enabled`. Changed in place, without a restart.
+- `wait_for_ready` (Boolean) Wait for the database to finish provisioning before the apply completes. On by default, because anything that depends on `endpoint` needs one that answers. Set to `false` to return as soon as the work is accepted. A new database that sets `replication_tls` or `client_cert_mode` is waited for regardless: those are applied once it runs.
 
 ### Read-Only
 

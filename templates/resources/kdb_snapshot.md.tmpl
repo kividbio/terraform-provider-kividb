@@ -1,0 +1,58 @@
+---
+page_title: "kividb_kdb_snapshot Resource"
+subcategory: ""
+description: |-
+  A KDB export of a database, taken on demand.
+---
+
+# kividb_kdb_snapshot (Resource)
+
+A KDB export of a database: its data written out as a portable `.kdb` file,
+taken on demand. Unlike a [disk snapshot](disk_snapshot.md), the file can be
+downloaded from the console, delivered to a bucket of your own, and loaded into
+any KiviDB.
+
+{{ tffile "examples/resources/kividb_kdb_snapshot/resource.tf" }}
+
+## Waiting
+
+The apply waits, for up to an hour, for the file to be written, because an
+export still being written cannot be restored from or deleted. Set
+`wait_for_ready = false` to return as soon as the export is queued.
+
+If the export fails, the apply fails with its error, and the failed export is
+deleted, since it holds no file. If it is still being written when the hour is
+up, its id is kept in state and Terraform marks it tainted: it exists, and the
+next apply replaces it rather than forgetting it.
+
+## Delivery
+
+When the database has a verified export destination
+([`kividb_instance_export`](instance_export.md)), the export is also copied into
+that bucket after it is written. That copy is not waited for: `delivery_status`
+reads `pending`, or null, until a refresh after it lands. Set `deliver = false`
+to keep an export in KiviDB's storage only.
+
+## Destroying
+
+Destroying the resource deletes the export from KiviDB's storage. A copy already
+delivered to your bucket is yours and is not touched. An export still being
+written is waited for (up to 30 minutes) and deleted when it finishes.
+
+## Restoring
+
+To make a new database from an export, set [`kividb_instance`](instance.md)'s
+`restore_from_kdb_snapshot_id` to its `id`. The database must be in the
+export's `cloud`, `region` and cloud account. Restoring into an existing
+database replaces its data and is not a Terraform operation; do it from the
+console or through an assistant.
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}

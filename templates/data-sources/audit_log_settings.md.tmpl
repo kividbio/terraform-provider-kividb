@@ -1,0 +1,32 @@
+---
+page_title: "kividb_audit_log_settings Data Source"
+subcategory: ""
+description: |-
+  Whether the organization keeps an audit log, and for how long.
+---
+
+# kividb_audit_log_settings (Data Source)
+
+Whether the organization keeps an audit log, and for how long. Read with an API
+key that has the owner or admin role.
+
+{{ tffile "examples/data-sources/kividb_audit_log_settings/data-source.tf" }}
+
+## Why this is not a resource
+
+Turning the audit log on or off is accepted only from the organization's owner,
+signed in to the console (Dashboard → Settings → Audit log). The API refuses the
+change from every API key, whatever its role: whether an organization keeps a
+record of what its members do is the owner's decision, as a person. A resource
+could only ever fail to apply, so the provider reads the setting instead — which
+is enough to stop a plan on an organization that has the log off, as the example
+does.
+
+## What turning it off does
+
+Turning the log off stops new events being recorded. It deletes nothing: events
+already recorded stay in the console for `hot_days` and in the S3 Object Lock
+archive for `retention_days`, and stay in the export. The log records its own
+switching off, so it says when it stopped.
+
+{{ .SchemaMarkdown | trimspace }}

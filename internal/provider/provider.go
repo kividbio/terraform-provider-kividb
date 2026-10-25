@@ -113,6 +113,23 @@ func (p *kividbProvider) Resources(_ context.Context) []func() resource.Resource
 	return []func() resource.Resource{
 		NewInstanceResource,
 		NewDiskSnapshotResource,
+		NewDatabaseUserResource,
+		NewMaintenanceWindowResource,
+		NewSnapshotScheduleResource,
+		NewInstanceNetworkResource,
+		NewPrivateLinkResource,
+		NewExportDestinationResource,
+		NewExportDestinationVerificationResource,
+		NewInstanceExportResource,
+		NewKdbSnapshotResource,
+		NewAlertChannelResource,
+		NewAlertRuleResource,
+		NewSemanticCacheResource,
+		NewAgentMemoryStoreResource,
+		NewContextModelResource,
+		NewContextAgentKeyResource,
+		NewDataPipelineResource,
+		NewCreditReservationResource,
 	}
 }
 
@@ -121,5 +138,11 @@ func (p *kividbProvider) DataSources(_ context.Context) []func() datasource.Data
 		NewInstanceDataSource,
 		NewCloudAccountDataSource,
 		NewCloudAccountsDataSource,
+		NewTLSCACertificateDataSource,
+		NewClientCertificatesDataSource,
+		NewKdbSnapshotsDataSource,
+		NewDiskSnapshotsDataSource,
+		NewAuditLogSettingsDataSource,
+		NewCreditReservationsDataSource,
 	}
 }

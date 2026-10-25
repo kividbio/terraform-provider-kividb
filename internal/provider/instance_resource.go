@@ -17,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -26,10 +27,11 @@ import (
 )
 
 var (
-	_ resource.Resource                = (*instanceResource)(nil)
-	_ resource.ResourceWithConfigure   = (*instanceResource)(nil)
-	_ resource.ResourceWithImportState = (*instanceResource)(nil)
-	_ resource.ResourceWithModifyPlan  = (*instanceResource)(nil)
+	_ resource.Resource                   = (*instanceResource)(nil)
+	_ resource.ResourceWithConfigure      = (*instanceResource)(nil)
+	_ resource.ResourceWithImportState    = (*instanceResource)(nil)
+	_ resource.ResourceWithModifyPlan     = (*instanceResource)(nil)
+	_ resource.ResourceWithValidateConfig = (*instanceResource)(nil)
 )
 
 func NewInstanceResource() resource.Resource { return &instanceResource{} }
@@ -68,6 +70,12 @@ type instanceModel struct {
 	RestoreFromKdbSnapshotID types.String `tfsdk:"restore_from_kdb_snapshot_id"`
 
 	WaitForReady types.Bool `tfsdk:"wait_for_ready"`
+
+	FreeTier       types.Bool   `tfsdk:"free_tier"`
+	ShardCount     types.Int64  `tfsdk:"shard_count"`
+	ReplicationTLS types.Bool   `tfsdk:"replication_tls"`
+	ClientCertMode types.String `tfsdk:"client_cert_mode"`
+	ClientCaPem    types.String `tfsdk:"client_ca_pem"`
 }
 
 func (r *instanceResource) Metadata(_ context.Context, req resource.MetadataRequest, res *resource.MetadataResponse) {
@@ -90,8 +98,9 @@ where the API has an operation for it:
 | ` + "`data_size_gb`, `throughput_mode`" + ` | resized in place |
 | ` + "`replica_count`" + ` | scaled in place, 1-3 |
 | ` + "`tier`" + ` | upgraded in place |
-| ` + "`kividb_version`, `lua_enabled`, `tls_enabled`" + ` | applied by a rolling restart |
-| ` + "`cloud`, `region`, `cloud_account_id`, `aof_enabled`, `tls_only`" + ` | **replaces the database** |
+| ` + "`kividb_version`, `lua_enabled`, `tls_enabled`, `replication_tls`, `client_cert_mode`, `client_ca_pem`" + ` | applied by a rolling restart |
+| ` + "`tls_only`" + ` | changed in place, without a restart |
+| ` + "`cloud`, `region`, `cloud_account_id`, `aof_enabled`, `free_tier`, `shard_count`" + ` | **replaces the database** |
 | ` + "`restore_from_snapshot_id`, `restore_from_kdb_snapshot_id`" + ` | **replaces the database** when changed to a different snapshot |
 
 The last rows are the important ones. There is no operation that moves a
@@ -108,7 +117,27 @@ with that snapshot's data. A snapshot is restored only where it lives: the same
 cloud, region and cloud account. Leave ` + "`cloud_account_id`" + ` unset and the
 database is placed in the snapshot's account; set it, and it must be that
 account. When the snapshot's id is known at plan time the provider checks this
-in the plan, otherwise the API refuses a mismatch at apply.`,
+in the plan, otherwise the API refuses a mismatch at apply.
+
+### Free tier
+
+Set ` + "`free_tier = true`" + ` for the free database: one per organization owner,
+on AWS only, in ` + "`us-east-1`, `eu-central-1`, `ap-south-1`, `ap-northeast-1` or `af-south-1`" + `.
+It is always an Essentials database of 1 GB with no replicas, Lua, TLS or
+append-only persistence, so the plan refuses any other value for those rather
+than creating something different from the configuration. Upgrading it to a
+paid database is done in the console; here, changing ` + "`free_tier`" + ` replaces it.
+
+### Encryption between nodes, and client certificates
+
+` + "`replication_tls`" + ` encrypts replication between a database's own nodes with its
+TLS certificate. ` + "`client_cert_mode`" + ` asks clients on the TLS port for a
+certificate signed by ` + "`client_ca_pem`" + `: ` + "`optional`" + ` checks one when it is
+offered, ` + "`required`" + ` refuses a client without one, and needs ` + "`tls_only`" + ` so
+the plaintext port cannot be used to get round it. Both need ` + "`tls_enabled`" + `,
+are applied by the same rolling restart as an engine change, and are not
+available on sharded databases yet. On a new database they are applied once it
+is running, by a second restart a minute or two after it is created.`,
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -196,20 +225,27 @@ in the plan, otherwise the API refuses a mismatch at apply.`,
 				MarkdownDescription: "Serve TLS alongside plaintext. Applied by a rolling restart.",
 			},
 
+			// No static default: the API decides this from the tier. It keeps
+			// append-only persistence on for every paid database whatever is sent,
+			// and off for the free tier, so a default of true planned a free
+			// database that could never match its own read-back.
 			"aof_enabled": schema.BoolAttribute{
 				Optional: true,
 				Computed: true,
-				Default:  booldefault.StaticBool(true),
-				MarkdownDescription: "Append-only persistence. **Changing this replaces the database**: " +
-					"it is chosen when the volume is laid out and there is no operation to change it after.",
-				PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
+				MarkdownDescription: "Append-only persistence. Always on for a paid database and off for the " +
+					"free tier: the API decides it, so leave it unset. Setting it to the other value is " +
+					"refused at plan. **Changing this replaces the database.**",
+				PlanModifiers: []planmodifier.Bool{aofFollowsTier(), boolplanmodifier.RequiresReplace()},
 			},
+			// Changed in place through the network route, which is where the API
+			// keeps it: TLS-only is which port the allowlist is open on, so it
+			// takes effect when the firewall is written, with no restart.
 			"tls_only": schema.BoolAttribute{
-				Optional:            true,
-				Computed:            true,
-				Default:             booldefault.StaticBool(false),
-				MarkdownDescription: "Refuse plaintext connections. **Changing this replaces the database.**",
-				PlanModifiers:       []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(false),
+				MarkdownDescription: "Refuse plaintext connections: the allowlist is open on the TLS port (6380) " +
+					"only. Needs `tls_enabled`. Changed in place, without a restart.",
 			},
 
 			"wait_for_ready": schema.BoolAttribute{
@@ -218,8 +254,58 @@ in the plan, otherwise the API refuses a mismatch at apply.`,
 				Default:  booldefault.StaticBool(true),
 				MarkdownDescription: "Wait for the database to finish provisioning before the apply " +
 					"completes. On by default, because anything that depends on `endpoint` needs one " +
-					"that answers. Set to `false` to return as soon as the work is accepted.",
+					"that answers. Set to `false` to return as soon as the work is accepted. A new database that sets " +
+					"`replication_tls` or `client_cert_mode` is waited for regardless: those are applied once it runs.",
 				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+
+			"free_tier": schema.BoolAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(false),
+				MarkdownDescription: "Create the free database: AWS only, 1 GB, Essentials, no replicas. One per " +
+					"organization owner, across every organization they own. See \"The free tier\" above for what " +
+					"it fixes. **Changing this replaces the database.**",
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.RequiresReplace()},
+			},
+			"shard_count": schema.Int64Attribute{
+				Optional: true,
+				Computed: true,
+				Default:  int64default.StaticInt64(1),
+				MarkdownDescription: "Shards. `1` is an ordinary database. Above 1, `data_size_gb` and " +
+					"`replica_count` are per shard. Sharded databases are not generally available yet: where " +
+					"they are not offered, the API refuses one and says so. " +
+					"**Changing this replaces the database.**",
+				Validators:    []validator.Int64{int64validator.Between(1, 64)},
+				PlanModifiers: []planmodifier.Int64{int64planmodifier.RequiresReplace()},
+			},
+			"replication_tls": schema.BoolAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  booldefault.StaticBool(false),
+				MarkdownDescription: "Encrypt replication between this database's nodes, using its TLS " +
+					"certificate. Needs `tls_enabled`; not available on sharded databases, which already " +
+					"encrypt traffic between their nodes when TLS is on. Applied by a rolling restart.",
+			},
+			"client_cert_mode": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				Default:  stringdefault.StaticString("off"),
+				MarkdownDescription: "Client certificates (mutual TLS) on the TLS port: `off`, `optional` " +
+					"(checked when a client offers one) or `required` (a client without one is refused). " +
+					"Anything but `off` needs `tls_enabled` and `client_ca_pem`; `required` also needs " +
+					"`tls_only`. Applied by a rolling restart.",
+				Validators: []validator.String{stringvalidator.OneOf("off", "optional", "required")},
+			},
+			"client_ca_pem": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				MarkdownDescription: "The CA certificate, or a bundle of up to 10, that signs your client " +
+					"certificates, in PEM. Each must be a CA certificate valid today; a private key is refused. " +
+					"Set it only with `client_cert_mode` `optional` or `required`: the API discards it when " +
+					"the mode is `off`.",
+				Validators:    []validator.String{stringvalidator.LengthAtMost(65536)},
+				PlanModifiers: []planmodifier.String{caFollowsMode()},
 			},
 
 			"status":          schema.StringAttribute{Computed: true, MarkdownDescription: "Lifecycle status."},
@@ -377,6 +463,13 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 		create.KividbVersion = &v
 	}
 	create.AofEnabled = boolPtr(plan.AofEnabled)
+	if plan.FreeTier.ValueBool() {
+		v := true
+		create.FreeTier = &v
+	}
+	if n := plan.ShardCount.ValueInt64(); n > 1 {
+		create.ShardCount = &n
+	}
 	create.LuaEnabled = boolPtr(plan.LuaEnabled)
 	create.TLSEnabled = boolPtr(plan.TLSEnabled)
 	create.TLSOnly = boolPtr(plan.TLSOnly)
@@ -429,6 +522,27 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	// What was asked for, before the read-back overwrites it.
+	wanted := plan
+	applyInstance(&plan, inst)
+
+	// Encrypted replication and client certificates are not create options:
+	// the API applies them to a running database, through the same restart as
+	// an engine change. So a new database that asks for either gets it now.
+	inst, err = r.applyNodeSecurityAfterCreate(ctx, &wanted, inst)
+	if inst != nil {
+		// Compared against the configured CA, so the same certificates written
+		// differently are kept as written.
+		plan.ClientCaPem = wanted.ClientCaPem
+	}
+	if err != nil {
+		if inst != nil {
+			applyInstance(&plan, inst)
+		}
+		res.Diagnostics.Append(res.State.Set(ctx, &plan)...)
+		res.Diagnostics.AddError("The database was created but its TLS settings were not applied", explain(err))
+		return
+	}
 	applyInstance(&plan, inst)
 	res.Diagnostics.Append(res.State.Set(ctx, &plan)...)
 }
@@ -513,6 +627,28 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 				"An earlier part of this change was applied and the database did not come back to rest, "+
 					"so the rest was not attempted: "+explain(err),
 			)
+			return false
+		}
+		return true
+	}
+
+	// settledWith waits for an engine change to land, not only for the status to
+	// come back: the network route reads tls_enabled from the database row, and
+	// TLS-only is refused until the change that turns TLS on is in it.
+	settledWith := func(br BinaryRequest) bool {
+		want := func(i *Instance) error {
+			if br.TLSEnabled != nil && i.TLSEnabled != *br.TLSEnabled {
+				return fmt.Errorf("tls_enabled is still %t, not %t", i.TLSEnabled, *br.TLSEnabled)
+			}
+			if br.ClientCertMode != nil && i.clientCertMode() != *br.ClientCertMode {
+				return fmt.Errorf("client_cert_mode is still %s, not %s", i.clientCertMode(), *br.ClientCertMode)
+			}
+			return nil
+		}
+		if _, err := r.settleUntil(ctx, id, true, want); err != nil {
+			res.Diagnostics.AddError("The database did not settle between changes",
+				"An earlier part of this change was applied and the database did not come back to rest, "+
+					"so the rest was not attempted: "+explain(err))
 			return false
 		}
 		return true
@@ -608,11 +744,45 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		didSomething = true
 	}
 
+	/*
+	 * TLS-only, and the engine change it is tangled with.
+	 *
+	 * tls_only is set through the network route, which refuses it while the
+	 * database has no TLS, and refuses turning it off while client certificates
+	 * are required. The engine change, for its part, refuses requiring client
+	 * certificates while the database is not TLS-only. So the order matters:
+	 * TLS-only goes first when the database already allows it, otherwise
+	 * between two engine changes -- the first bringing TLS up (or relaxing client
+	 * certificates), the second carrying whatever needed TLS-only to be in
+	 * place.
+	 */
+	tlsOnlyChanged := !plan.TLSOnly.Equal(state.TLSOnly) && !plan.TLSOnly.IsUnknown()
+	wantTLSOnly := plan.TLSOnly.ValueBool()
+	setTLSOnly := func() bool {
+		if _, err := r.client.SetTLSOnly(ctx, id, wantTLSOnly); err != nil {
+			res.Diagnostics.AddError("Could not change tls_only", explainNetwork(err))
+			return false
+		}
+		didSomething = true
+		tlsOnlyChanged = false
+		return true
+	}
+	if tlsOnlyChanged {
+		canNow := (wantTLSOnly && state.TLSEnabled.ValueBool()) ||
+			(!wantTLSOnly && state.ClientCertMode.ValueString() != "required")
+		if canNow {
+			if !settled() || !setTLSOnly() {
+				return
+			}
+		}
+	}
+
 	// Version, Lua and TLS travel together: one restart applies all three, so
 	// sending them separately would restart the database up to three times.
 	if !plan.KividbVersion.Equal(state.KividbVersion) ||
 		!plan.LuaEnabled.Equal(state.LuaEnabled) ||
-		!plan.TLSEnabled.Equal(state.TLSEnabled) {
+		!plan.TLSEnabled.Equal(state.TLSEnabled) ||
+		nodeSecurityChanged(&plan, &state) {
 
 		version := plan.KividbVersion.ValueString()
 		if plan.KividbVersion.IsUnknown() || version == "" {
@@ -635,11 +805,47 @@ func (r *instanceResource) Update(ctx context.Context, req resource.UpdateReques
 		if !plan.TLSEnabled.Equal(state.TLSEnabled) {
 			br.TLSEnabled = boolPtr(plan.TLSEnabled)
 		}
+		br.binarySettingsFields = nodeSecurityRequest(&plan, &state)
+
+		// What has to wait for TLS-only to change first.
+		var later BinaryRequest
+		if tlsOnlyChanged && wantTLSOnly && br.ClientCertMode != nil && *br.ClientCertMode == "required" {
+			later = BinaryRequest{KividbVersion: version}
+			later.ClientCertMode, later.ClientCaPem = br.ClientCertMode, br.ClientCaPem
+			br.ClientCertMode, br.ClientCaPem = nil, nil
+		}
+		if tlsOnlyChanged && !wantTLSOnly && br.TLSEnabled != nil && !*br.TLSEnabled {
+			later = BinaryRequest{KividbVersion: version, TLSEnabled: br.TLSEnabled}
+			br.TLSEnabled = nil
+		}
+
 		if !settled() {
 			return
 		}
 		if err := r.client.UpgradeBinary(ctx, id, br); err != nil {
 			res.Diagnostics.AddError("Could not apply the engine change", explain(err))
+			return
+		}
+		didSomething = true
+
+		if tlsOnlyChanged {
+			if !settledWith(br) || !setTLSOnly() {
+				return
+			}
+		}
+		if later != (BinaryRequest{}) {
+			if !settled() {
+				return
+			}
+			if err := r.client.UpgradeBinary(ctx, id, later); err != nil {
+				res.Diagnostics.AddError("Could not apply the engine change", explain(err))
+				return
+			}
+		}
+	}
+	if tlsOnlyChanged {
+		// Nothing above could make it possible; the network route explains why.
+		if !settled() || !setTLSOnly() {
 			return
 		}
 	}
@@ -842,6 +1048,16 @@ func wantedBy(plan, state *instanceModel) func(*Instance) error {
 		})
 	}
 
+	if !plan.TLSOnly.Equal(state.TLSOnly) && !plan.TLSOnly.IsUnknown() {
+		expected = append(expected, expectation{
+			"tls_only", strconv.FormatBool(plan.TLSOnly.ValueBool()),
+			func(i *Instance) string { return strconv.FormatBool(i.TLSOnly) },
+		})
+	}
+	for _, e := range nodeSecurityExpectations(plan, state) {
+		expected = append(expected, e)
+	}
+
 	if len(expected) == 0 {
 		return nil
 	}
@@ -884,6 +1100,7 @@ func applyInstance(m *instanceModel, inst *Instance) {
 	m.PrivateEndpoint = stringOrNull(inst.PrivateEndpoint)
 	m.PrivateReadonlyEndpoint = stringOrNull(inst.PrivateReadonlyEndpoint)
 	m.PrivateReplicaEndpoints = stringList(inst.PrivateReplicaEndpoints)
+	applyInstanceSettings(m, inst)
 }
 
 // nullUnknownComputed replaces the plan's unknowns with nulls, for the one path
@@ -893,6 +1110,7 @@ func nullUnknownComputed(m *instanceModel) {
 	for _, s := range []*types.String{
 		&m.Name, &m.KividbVersion, &m.Status, &m.Endpoint, &m.PublicEndpoint, &m.OrgID,
 		&m.PrivateEndpoint, &m.PrivateReadonlyEndpoint, &m.CloudAccountID, &m.CloudAccountName,
+		&m.ClientCaPem,
 	} {
 		if s.IsUnknown() {
 			*s = types.StringNull()
@@ -900,6 +1118,9 @@ func nullUnknownComputed(m *instanceModel) {
 	}
 	if m.PrivateReplicaEndpoints.IsUnknown() {
 		m.PrivateReplicaEndpoints = types.ListNull(types.StringType)
+	}
+	if m.AofEnabled.IsUnknown() {
+		m.AofEnabled = types.BoolNull()
 	}
 }
 

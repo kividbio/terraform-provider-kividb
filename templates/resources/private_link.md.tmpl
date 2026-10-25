@@ -1,0 +1,22 @@
+---
+page_title: "kividb_private_link Resource"
+subcategory: ""
+description: |-
+  Private connectivity to a database, a paid add-on of $25 a month.
+---
+
+# kividb_private_link (Resource)
+
+{{ .Description | trimspace }}
+
+{{ tffile "examples/resources/kividb_private_link/resource.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}

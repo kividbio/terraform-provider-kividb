@@ -64,6 +64,16 @@ type APIError struct {
 //
 // Anything that does not decode still produces an error carrying the status.
 func decodeAPIError(status int, raw []byte) *APIError {
+	apiErr := decodeAPIErrorEnvelope(status, raw)
+	// Some refusals carry only field errors and no message (a 400 from schema
+	// validation); name the fields rather than show a bare status.
+	if apiErr.Message == "" {
+		apiErr.Message = issuesMessage(raw)
+	}
+	return apiErr
+}
+
+func decodeAPIErrorEnvelope(status int, raw []byte) *APIError {
 	apiErr := &APIError{Status: status}
 	var envelope struct {
 		Error struct {
@@ -72,6 +82,7 @@ func decodeAPIError(status int, raw []byte) *APIError {
 			SnapshotCloud          string          `json:"snapshot_cloud"`
 			SnapshotRegion         string          `json:"snapshot_region"`
 			SnapshotCloudAccountID json.RawMessage `json:"snapshot_cloud_account_id"`
+			Issues                 *zodIssues      `json:"issues"`
 		} `json:"error"`
 	}
 	if json.Unmarshal(raw, &envelope) != nil {
@@ -80,6 +91,9 @@ func decodeAPIError(status int, raw []byte) *APIError {
 	e := envelope.Error
 	apiErr.Code = e.Code
 	apiErr.Message = e.Message
+	if apiErr.Message == "" && e.Issues != nil {
+		apiErr.Message = e.Issues.String()
+	}
 	apiErr.SnapshotCloud = e.SnapshotCloud
 	apiErr.SnapshotRegion = e.SnapshotRegion
 	if len(e.SnapshotCloudAccountID) > 0 {
@@ -180,6 +194,8 @@ type Instance struct {
 	PrivateReadonlyEndpoint *string  `json:"private_readonly_endpoint"`
 	PrivateReplicaEndpoints []string `json:"private_replica_endpoints"`
 	BillingModel            *string  `json:"billing_model"`
+
+	instanceSettingsFields
 }
 
 type CreateInstanceRequest struct {
@@ -203,6 +219,8 @@ type CreateInstanceRequest struct {
 	// account than the snapshot's own.
 	RestoreFromSnapshotID    *string `json:"restore_from_snapshot_id,omitempty"`
 	RestoreFromKdbSnapshotID *string `json:"restore_from_kdb_snapshot_id,omitempty"`
+
+	createSettingsFields
 }
 
 type createInstanceResponse struct {
@@ -322,6 +340,8 @@ type BinaryRequest struct {
 	KividbVersion string `json:"kividb_version"`
 	LuaEnabled    *bool  `json:"lua_enabled,omitempty"`
 	TLSEnabled    *bool  `json:"tls_enabled,omitempty"`
+
+	binarySettingsFields
 }
 
 func (c *Client) UpgradeBinary(ctx context.Context, id string, req BinaryRequest) error {

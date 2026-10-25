@@ -1,0 +1,47 @@
+---
+page_title: "kividb_instance_export Resource"
+subcategory: ""
+description: |-
+  Where a database's KDB exports are delivered, and how often it exports on its own.
+---
+
+# kividb_instance_export (Resource)
+
+Where a database's KDB exports are delivered, and how often it exports on its
+own. It is the database's export configuration, which always exists, so
+creating this resource sets it and destroying it turns exports off. One per
+database: two would overwrite each other.
+
+{{ tffile "examples/resources/kividb_instance_export/resource.tf" }}
+
+## Delivery
+
+With `export_destination_id` set, every KDB export of the database — scheduled
+ones, and those taken with [`kividb_kdb_snapshot`](kdb_snapshot.md), the
+console or an assistant — is also copied into that bucket once it is written.
+The destination must be verified; the API refuses one that is not. Reference
+the [`kividb_export_destination_verification`](export_destination_verification.md)'s
+`id` (which is the destination's id) so this is applied after verification
+passes.
+
+## Schedules
+
+`cadence = "daily"` or `"weekly"` has the database export itself, and a
+schedule needs a destination. KiviDB keeps its own copy of a scheduled export
+for 7 days; the one in your bucket is yours to keep or expire.
+
+Scheduled exports run only on a running, single-shard, paid database. A
+schedule on a free-tier database is refused: at plan when the database already
+exists, otherwise by the API at apply, in the same words. A destination with
+`cadence = "off"` is accepted there, and an export taken on demand is still
+delivered. The API refuses an export configuration for a sharded database.
+
+{{ .SchemaMarkdown | trimspace }}
+
+{{ if .HasImport -}}
+## Import
+
+Import is supported using the following syntax:
+
+{{ codefile "shell" .ImportFile }}
+{{- end }}

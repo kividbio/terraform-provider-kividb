@@ -1,0 +1,18 @@
+---
+page_title: "kividb_credit_reservations Data Source"
+subcategory: ""
+description: |-
+  The credit balance, how much of it is reserved, and every credit reservation.
+---
+
+# kividb_credit_reservations (Data Source)
+
+The organization's credit balance, how much of it is set aside for particular
+databases, and every credit reservation, active or not. Reading spends
+nothing. It needs an API key with the owner or admin role; a member key is
+refused. To make or change a reservation, use
+[`kividb_credit_reservation`](../resources/credit_reservation.md).
+
+{{ tffile "examples/data-sources/kividb_credit_reservations/data-source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
