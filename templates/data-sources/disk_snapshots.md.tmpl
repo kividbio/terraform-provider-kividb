@@ -1,0 +1,17 @@
+---
+page_title: "kividb_disk_snapshots Data Source"
+subcategory: ""
+description: |-
+  Disk snapshots of your databases, newest first.
+---
+
+# kividb_disk_snapshots (Data Source)
+
+Disk snapshots of your databases, newest first, scheduled ones included. Use
+one's `id` as [`kividb_instance`](../resources/instance.md)'s
+`restore_from_snapshot_id` to make a new database from it. Deleted snapshots
+are not listed.
+
+{{ tffile "examples/data-sources/kividb_disk_snapshots/data-source.tf" }}
+
+{{ .SchemaMarkdown | trimspace }}
