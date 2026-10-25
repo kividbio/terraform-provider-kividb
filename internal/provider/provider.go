@@ -126,6 +126,7 @@ func (p *kividbProvider) Resources(_ context.Context) []func() resource.Resource
 		NewAgentMemoryStoreResource,
 		NewContextModelResource,
 		NewContextAgentKeyResource,
+		NewDataPipelineResource,
 	}
 }
 
