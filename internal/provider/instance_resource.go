@@ -73,6 +73,7 @@ type instanceModel struct {
 
 	FreeTier       types.Bool   `tfsdk:"free_tier"`
 	ShardCount     types.Int64  `tfsdk:"shard_count"`
+	ReserveMonths  types.Int64  `tfsdk:"reserve_months"`
 	ReplicationTLS types.Bool   `tfsdk:"replication_tls"`
 	ClientCertMode types.String `tfsdk:"client_cert_mode"`
 	ClientCaPem    types.String `tfsdk:"client_ca_pem"`
@@ -273,11 +274,23 @@ is running, by a second restart a minute or two after it is created.`,
 				Computed: true,
 				Default:  int64default.StaticInt64(1),
 				MarkdownDescription: "Shards. `1` is an ordinary database. Above 1, `data_size_gb` and " +
-					"`replica_count` are per shard. Sharded databases are not generally available yet: where " +
-					"they are not offered, the API refuses one and says so. " +
-					"**Changing this replaces the database.**",
+					"`replica_count` are per shard, and the database needs `reserve_months` of at least 1. " +
+					"Sharded databases are offered in the regions that can build them (AWS us-east-1 and " +
+					"us-west-2 at launch); elsewhere, or for an arrangement larger than the region can take, " +
+					"the API refuses with the reason. **Changing this replaces the database.**",
 				Validators:    []validator.Int64{int64validator.Between(1, 64)},
 				PlanModifiers: []planmodifier.Int64{int64planmodifier.RequiresReplace()},
+			},
+			"reserve_months": schema.Int64Attribute{
+				Optional: true,
+				Computed: true,
+				Default:  int64default.StaticInt64(0),
+				MarkdownDescription: "Months of credit (0-12) to set aside for this database when it is created, " +
+					"as checkout's \"Reserve credits\" does: databases launched later cannot spend it, and if the " +
+					"rest of the balance runs out, databases without a reservation are stopped first. A sharded " +
+					"database must reserve at least 1. Used only when the database is created: changing it " +
+					"later does nothing (manage reservations afterwards with `kividb_credit_reservation`).",
+				Validators: []validator.Int64{int64validator.Between(0, 12)},
 			},
 			"replication_tls": schema.BoolAttribute{
 				Optional: true,
@@ -469,6 +482,9 @@ func (r *instanceResource) Create(ctx context.Context, req resource.CreateReques
 	}
 	if n := plan.ShardCount.ValueInt64(); n > 1 {
 		create.ShardCount = &n
+	}
+	if n := plan.ReserveMonths.ValueInt64(); n > 0 {
+		create.ReserveMonths = &n
 	}
 	create.LuaEnabled = boolPtr(plan.LuaEnabled)
 	create.TLSEnabled = boolPtr(plan.TLSEnabled)
@@ -898,6 +914,9 @@ func (r *instanceResource) ImportState(ctx context.Context, req resource.ImportS
 	// Defaulted rather than read, because the API has no opinion about it: it
 	// describes how this provider behaves, not how the database is configured.
 	state.WaitForReady = types.BoolValue(true)
+	// Create-time only, and not read back: an imported database reserved
+	// nothing through this resource.
+	state.ReserveMonths = types.Int64Value(0)
 	applyInstance(&state, inst)
 	res.Diagnostics.Append(res.State.Set(ctx, &state)...)
 }

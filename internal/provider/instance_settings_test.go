@@ -44,6 +44,7 @@ func paidInstanceVals() map[string]tftypes.Value {
 	vals["kividb_version"] = dsStr("1.1.2")
 	vals["free_tier"] = dsBoolean(false)
 	vals["shard_count"] = num(1)
+	vals["reserve_months"] = num(0)
 	vals["replication_tls"] = dsBoolean(false)
 	vals["client_cert_mode"] = dsStr("off")
 	vals["client_ca_pem"] = nullStr()
@@ -99,6 +100,30 @@ func TestCreateSendsShardCount(t *testing.T) {
 	}
 	if _, sent := f.sent("POST /instances")[0].Body["free_tier"]; sent {
 		t.Error("free_tier must not be sent for a paid database")
+	}
+	if _, sent := f.sent("POST /instances")[0].Body["reserve_months"]; sent {
+		t.Error("reserve_months 0 must not be sent")
+	}
+}
+
+// A sharded database must reserve credit at create (the API refuses one
+// without, sharding_needs_reservation), so the field reaches the body and the
+// configured value stays in state: it is not read back.
+func TestCreateSendsReserveMonths(t *testing.T) {
+	f := newFakeAPI(t)
+	f.answer("POST /instances", 202, `{"instance_id":"i-1"}`)
+	f.answer("GET /instances/i-1", 200, instanceJSON(t, map[string]any{"shard_count": 3, "tls_enabled": false}))
+	vals := paidInstanceVals()
+	vals["shard_count"], vals["reserve_months"], vals["tls_enabled"] = num(3), num(1), dsBoolean(false)
+	res := dsDoCreate(t, &instanceResource{client: f.client()}, vals)
+	failOn(t, res.Diagnostics)
+	if body := f.sent("POST /instances")[0].Body; body["reserve_months"] != float64(1) {
+		t.Errorf("reserve_months was not sent: %v", body)
+	}
+	var got instanceModel
+	failOn(t, res.State.Get(context.Background(), &got))
+	if got.ReserveMonths.ValueInt64() != 1 {
+		t.Errorf("state reserve_months = %v, want 1", got.ReserveMonths)
 	}
 }
 

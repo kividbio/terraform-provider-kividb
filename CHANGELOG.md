@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.7.0 (unreleased)
+
+### Added
+
+- `kividb_instance.reserve_months`: months of credit (0-12) to set aside for
+  the database when it is created, as checkout's "Reserve credits" does. It
+  is used only at create; afterwards, manage reservations with
+  `kividb_credit_reservation`.
+
+### Changed
+
+- Sharded databases (`shard_count` above 1) are available in AWS us-east-1
+  and us-west-2. A sharded database must set `reserve_months` to at least 1,
+  because it cannot be stopped when the balance runs out. The API refuses one
+  without it, and refuses one in a region that cannot build it, with the
+  reason.
+
 ## 0.6.0 (October 25, 2026)
 
 Most of what KiviDB Cloud has gained since 0.5.0 can now be managed from
