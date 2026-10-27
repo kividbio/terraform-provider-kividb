@@ -246,9 +246,31 @@ through the same API endpoint, and each changes only its own setting.
 ## Shards
 
 `shard_count` above 1 makes a sharded database: `data_size_gb` and
-`replica_count` are then per shard. Sharded databases are not offered
-everywhere yet; where they are not, the API refuses one with a message saying
-so. Changing `shard_count` replaces the database.
+`replica_count` are then per shard. Changing `shard_count` replaces the
+database.
+
+- **Where:** sharded databases are offered in the regions that can build them,
+  AWS us-east-1 and us-west-2 at launch. Elsewhere, or for an arrangement
+  larger than the region can take today, the API refuses the create and says
+  why.
+- **Credit:** a sharded database must set `reserve_months` to at least 1. It
+  cannot be stopped when the balance runs out, so it reserves its first month
+  when it is created.
+- **Above 512 GB in total,** the database is provisioned once capacity has been
+  reserved for it: send a capacity request from the console first.
+
+```terraform
+resource "kividb_instance" "orders" {
+  name           = "orders"
+  tier           = "essentials"
+  cloud          = "aws"
+  region         = "us-east-1"
+  data_size_gb   = 16 # per shard
+  shard_count    = 4  # 64 GB in total
+  replica_count  = 0
+  reserve_months = 1
+}
+```
 
 ## Pro has a minimum size, and it differs by cloud
 

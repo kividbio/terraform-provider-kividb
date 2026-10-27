@@ -284,9 +284,31 @@ through the same API endpoint, and each changes only its own setting.
 ## Shards
 
 `shard_count` above 1 makes a sharded database: `data_size_gb` and
-`replica_count` are then per shard. Sharded databases are not offered
-everywhere yet; where they are not, the API refuses one with a message saying
-so. Changing `shard_count` replaces the database.
+`replica_count` are then per shard. Changing `shard_count` replaces the
+database.
+
+- **Where:** sharded databases are offered in the regions that can build them,
+  AWS us-east-1 and us-west-2 at launch. Elsewhere, or for an arrangement
+  larger than the region can take today, the API refuses the create and says
+  why.
+- **Credit:** a sharded database must set `reserve_months` to at least 1. It
+  cannot be stopped when the balance runs out, so it reserves its first month
+  when it is created.
+- **Above 512 GB in total,** the database is provisioned once capacity has been
+  reserved for it: send a capacity request from the console first.
+
+```terraform
+resource "kividb_instance" "orders" {
+  name           = "orders"
+  tier           = "essentials"
+  cloud          = "aws"
+  region         = "us-east-1"
+  data_size_gb   = 16 # per shard
+  shard_count    = 4  # 64 GB in total
+  replica_count  = 0
+  reserve_months = 1
+}
+```
 
 ## Pro has a minimum size, and it differs by cloud
 
@@ -367,9 +389,10 @@ race its own teardown.
 - `name` (String) Hostname-safe name, unique across KiviDB. Generated if omitted; changing it renames the database in place.
 - `replica_count` (Number) Read replicas. `0` at creation for a single node; scaling afterwards accepts 1-3. Going back to `0` is not a scaling operation and is refused -- see the error for what to do instead.
 - `replication_tls` (Boolean) Encrypt replication between this database's nodes, using its TLS certificate. Needs `tls_enabled`; not available on sharded databases, which already encrypt traffic between their nodes when TLS is on. Applied by a rolling restart.
+- `reserve_months` (Number) Months of credit (0-12) to set aside for this database when it is created, as checkout's "Reserve credits" does: databases launched later cannot spend it, and if the rest of the balance runs out, databases without a reservation are stopped first. A sharded database must reserve at least 1. Used only when the database is created: changing it later does nothing (manage reservations afterwards with `kividb_credit_reservation`).
 - `restore_from_kdb_snapshot_id` (String) Create the database seeded from this KDB snapshot (a `.kdb` export). Same rule as `restore_from_snapshot_id`: the snapshot's cloud, region and cloud account only. Read only when the database is created. **Changing it to a different snapshot replaces the database**; removing it, or adding it to a database that already exists, changes nothing.
 - `restore_from_snapshot_id` (String) Create the database from this disk snapshot (see `kividb_disk_snapshot`). The database must be in the snapshot's cloud, region and cloud account, and at least as large as the snapshot needs; the API refuses anything else. Read only when the database is created. **Changing it to a different snapshot replaces the database**; removing it, or adding it to a database that already exists, changes nothing.
-- `shard_count` (Number) Shards. `1` is an ordinary database. Above 1, `data_size_gb` and `replica_count` are per shard. Sharded databases are not generally available yet: where they are not offered, the API refuses one and says so. **Changing this replaces the database.**
+- `shard_count` (Number) Shards. `1` is an ordinary database. Above 1, `data_size_gb` and `replica_count` are per shard, and the database needs `reserve_months` of at least 1. Sharded databases are offered in the regions that can build them (AWS us-east-1 and us-west-2 at launch); elsewhere, or for an arrangement larger than the region can take, the API refuses with the reason. **Changing this replaces the database.**
 - `throughput_mode` (String) `standard` or `high`. Changed in place.
 - `tls_enabled` (Boolean) Serve TLS alongside plaintext. Applied by a rolling restart.
 - `tls_only` (Boolean) Refuse plaintext connections: the allowlist is open on the TLS port (6380) only. Needs `tls_enabled`. Changed in place, without a restart.

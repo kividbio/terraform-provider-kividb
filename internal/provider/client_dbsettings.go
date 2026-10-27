@@ -63,6 +63,8 @@ func (f instanceSettingsFields) clientCertMode() string {
 type createSettingsFields struct {
 	FreeTier   *bool  `json:"free_tier,omitempty"`
 	ShardCount *int64 `json:"shard_count,omitempty"`
+	// Months of credit reserved for the new database; sent only when above 0.
+	ReserveMonths *int64 `json:"reserve_months,omitempty"`
 }
 
 // binarySettingsFields travel with the engine binary because the same restart
