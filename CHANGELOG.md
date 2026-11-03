@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `kividb_rest_api`: a database's REST API, an HTTPS endpoint compatible with
+  Upstash's REST API (`@upstash/redis` works by changing its URL and token).
+  Creating it issues a public certificate and opens port 443 to the database's
+  allow-list; `url` is set once the database serves it. Tokens are built from
+  a `kividb_database_user`'s name and password (see the example).
+
 ## 0.6.1 (October 27, 2026)
 
 ### Added
