@@ -210,8 +210,8 @@ is running, by a second restart a minute or two after it is created.`,
 			"kividb_version": schema.StringAttribute{
 				Optional:            true,
 				Computed:            true,
-				MarkdownDescription: "Engine version, e.g. `1.0.4`. Applied by a rolling restart.",
-				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				MarkdownDescription: "Oldest engine version to run, e.g. `1.2.1`. KiviDB Cloud supports the latest patch of each supported release and moves a database on an older patch to it in its maintenance window; a database already on a newer release than this keeps it, so the plan shows no change. Set a newer version to upgrade. Applied by a rolling restart, replicas first.",
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown(), versionFloorModifier{}},
 			},
 			"lua_enabled": schema.BoolAttribute{
 				Optional:            true,
