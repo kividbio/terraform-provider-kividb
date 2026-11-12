@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- `kividb_instance.kividb_version` is now the oldest release the
+  configuration accepts. KiviDB Cloud supports only the latest patch of each
+  supported release and moves databases on an older patch to it in their
+  maintenance window; a configuration pinned to the older patch used to plan a
+  downgrade on every run, which the API refuses, so every apply failed. A
+  database already on a newer release than configured now plans no change.
+
 ### Added
 
 - `kividb_rest_api`: a database's REST API, an HTTPS endpoint compatible with
