@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.1 (November 12, 2026)
 
 ### Changed
 
@@ -10,6 +10,8 @@
   maintenance window; a configuration pinned to the older patch used to plan a
   downgrade on every run, which the API refuses, so every apply failed. A
   database already on a newer release than configured now plans no change.
+
+## 0.7.0 (November 3, 2026)
 
 ### Added
 
